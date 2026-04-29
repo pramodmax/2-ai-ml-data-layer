@@ -40,7 +40,7 @@ variable "gitops_repo_revision" {
 variable "gitops_components_path" {
   description = "Path within the repository to the GitOps component directories."
   type        = string
-  default     = "gitops/components"
+  default     = "gitops/core"
 }
 
 # ─── Private Repository (optional) ───────────────────────────────────────────

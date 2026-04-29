@@ -21,8 +21,8 @@ gitops_repo_url = "https://github.com/your-org/2-ai-ml-data-layer.git"
 # Branch ArgoCD tracks
 gitops_repo_revision = "main"
 
-# Path within the repo to the component directories (default is correct)
-gitops_components_path = "gitops/components"
+# Path within the repo to the core component directories (default is correct)
+gitops_components_path = "gitops/core"
 
 # ─── Private Repository (optional) ───────────────────────────────────────────
 # Leave empty if the repository is public.

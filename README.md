@@ -85,7 +85,7 @@ Bootstrap flow:
        │
        ▼  Phase 4 — render + apply ApplicationSet
                          │
-              ┌──────────┘  Discovers gitops/components/*
+              ┌──────────┘  Discovers gitops/core/*
               │             Creates one Application per directory
               │             Sync waves sequence the install order
               ▼
@@ -113,9 +113,9 @@ Bootstrap flow:
 | **Grafana** | `grafana` | Custom dashboards for GPU utilisation, model inference latency, pipeline throughput, and cluster resource consumption. Connects to OpenShift Thanos Querier. |
 | **Data Science Project** | `data-science-project` | Tenant namespace registered in the RHOAI dashboard. Data scientists create notebooks, run pipelines, and deploy models here. RBAC grants access to the `data-scientists` group via RH SSO. |
 
-### Optional components (`gitops/optional/`)
+### Optional components (`gitops/opt/`)
 
-These are **not auto-installed**. Copy the relevant directory into `gitops/components/` to enable.
+Not auto-deployed. Copy the relevant directory into `gitops/core/` to enable.
 
 | Component | When to enable |
 |-----------|---------------|
@@ -257,7 +257,7 @@ oc get secret openshift-gitops-cluster -n openshift-gitops \
 │
 └── gitops/
     ├── applicationset.yaml.tpl       # Template rendered by Terraform bootstrap
-    ├── components/                   # Auto-deployed — one directory = one ArgoCD Application
+    ├── core/                         # Main components — auto-deployed by ArgoCD
     │   ├── namespaces/               # All namespaces (wave -5)
     │   ├── cert-manager/             # cert-manager operator (waves 0-1)
     │   ├── kueue/                    # Kueue + JobSet operators (waves 0-1)
@@ -269,7 +269,7 @@ oc get secret openshift-gitops-cluster -n openshift-gitops \
     │   ├── external-secrets/         # External Secrets Operator (wave 1)
     │   ├── monitoring/               # Prometheus config + Grafana (waves -5 to 15)
     │   └── data-science-project/     # Tenant namespace + RBAC (wave 20)
-    └── optional/                     # NOT auto-deployed — copy to components/ to enable
+    └── opt/                          # Optional components — copy to core/ to enable
         ├── nfd/                      # Node Feature Discovery (GPU node labelling)
         └── gpu/                      # NVIDIA GPU Operator + ClusterPolicy
 ```
@@ -278,7 +278,7 @@ oc get secret openshift-gitops-cluster -n openshift-gitops \
 
 ## Adding a New Component
 
-1. Create a new directory under `gitops/components/<component-name>/`
+1. Create a new directory under `gitops/core/<component-name>/`
 2. Add a `kustomization.yaml` referencing your manifests
 3. Add sync-wave annotations to control ordering
 4. Commit and push — ArgoCD picks up the new directory automatically via the git generator
@@ -289,7 +289,7 @@ No Terraform changes are needed.
 
 ## Enabling KServe with Service Mesh (already enabled in this config)
 
-KServe is enabled by default in this configuration (`managementState: Managed`) and RHOAI manages the Service Mesh control plane via the DSCInitialization CR (`serviceMesh.managementState: Managed`). If your cluster already has an existing Service Mesh, change `serviceMesh.managementState` to `Unmanaged` in `gitops/components/rhoai/dsc-initialization.yaml` and set `controlPlane` to point to your existing SMCP.
+KServe is enabled by default in this configuration (`managementState: Managed`) and RHOAI manages the Service Mesh control plane via the DSCInitialization CR (`serviceMesh.managementState: Managed`). If your cluster already has an existing Service Mesh, change `serviceMesh.managementState` to `Unmanaged` in `gitops/core/rhoai/dsc-initialization.yaml` and set `controlPlane` to point to your existing SMCP.
 
 ---
 
@@ -297,14 +297,14 @@ KServe is enabled by default in this configuration (`managementState: Managed`) 
 
 ### GPU support — Node Feature Discovery + NVIDIA GPU Operator
 
-Required only when the cluster has NVIDIA GPU nodes. Both directories are ready to use in `gitops/optional/`.
+Required only when the cluster has NVIDIA GPU nodes. Both directories are ready to use in `gitops/opt/`.
 
 ```bash
-cp -r gitops/optional/nfd  gitops/components/nfd
-cp -r gitops/optional/gpu  gitops/components/gpu
+cp -r gitops/opt/nfd  gitops/core/nfd
+cp -r gitops/opt/gpu  gitops/core/gpu
 ```
 
-Add the two namespaces to `gitops/components/namespaces/namespaces.yaml`:
+Add the two namespaces to `gitops/core/namespaces/namespaces.yaml`:
 
 ```yaml
 ---
@@ -331,7 +331,7 @@ Commit and push — ArgoCD picks up the new directories automatically. NFD runs 
 
 ### S3 object storage — pre-requisite setup
 
-`gitops/components/object-storage/` is auto-deployed and configures AWS S3 access. Before ArgoCD syncs it you must:
+`gitops/core/object-storage/` is auto-deployed and configures AWS S3 access. Before ArgoCD syncs it you must:
 
 1. **Create an S3 bucket** in AWS (same region as your cluster):
    ```bash
@@ -351,19 +351,19 @@ Commit and push — ArgoCD picks up the new directories automatically. NFD runs 
      }'
    ```
 
-3. **Update the region** in `gitops/components/object-storage/cluster-secret-store.yaml` if your cluster is not in `us-east-1`.
+3. **Update the region** in `gitops/core/object-storage/cluster-secret-store.yaml` if your cluster is not in `us-east-1`.
 
 The `s3-credentials` Kubernetes Secret is then created in `redhat-ods-applications` and referenced by AI Pipelines and MLflow.
 
 ### Feature Store (Feast)
-Set `feastoperator.managementState: Managed` in `gitops/components/rhoai/data-science-cluster.yaml`.
+Set `feastoperator.managementState: Managed` in `gitops/core/rhoai/data-science-cluster.yaml`.
 
 ### Llama Stack (RAG workloads)
 1. Install the Red Hat OpenShift Service Mesh 3.x operator
 2. Set `llamastackoperator.managementState: Managed` in the DataScienceCluster
 
 ### MLflow Production Backend
-Edit `gitops/components/mlflow/mlflow.yaml` and replace:
+Edit `gitops/core/mlflow/mlflow.yaml` and replace:
 - `backendStoreUri` with a PostgreSQL connection string
 - `artifactsDestination` with the S3 URI (`s3://my-ocp-ai-artifacts/mlflow`)
 
