@@ -24,6 +24,13 @@ gitops_repo_revision = "main"
 # Path within the repo to the core component directories (default is correct)
 gitops_components_path = "gitops/core"
 
+# ─── Optional Operators ──────────────────────────────────────────────────────
+# Set to true if the cluster has NVIDIA GPU worker nodes. When enabled, ArgoCD
+# automatically installs Node Feature Discovery and the NVIDIA GPU Operator.
+# The check-cluster-prereqs.sh script will warn if GPU nodes are detected
+# and this is still false.
+# enable_gpu = false
+
 # ─── Private Repository (optional) ───────────────────────────────────────────
 # Leave empty if the repository is public.
 

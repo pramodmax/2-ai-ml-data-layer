@@ -10,6 +10,10 @@ spec:
       revision: ${gitops_repo_revision}
       directories:
       - path: ${gitops_components_path}/*
+%{ if enable_gpu ~}
+      - path: gitops/opt/nfd
+      - path: gitops/opt/gpu
+%{ endif ~}
   template:
     metadata:
       name: "{{path.basename}}"

@@ -277,14 +277,37 @@ else
         warn "Allocatable worker memory: ~${TOTAL_MEM_KI} GiB — RHOAI recommends >= 64 GiB across workers"
       fi
 
-      # GPU nodes (informational)
+      # GPU nodes
       GPU_NODES=$(_oc get nodes \
         -o jsonpath='{range .items[*]}{.metadata.name}{" "}{.status.capacity.nvidia\.com/gpu}{"\n"}{end}' 2>/dev/null \
         | grep -v " $" | grep -v "^$" | wc -l | tr -d ' ')
       if [[ "$GPU_NODES" -gt 0 ]]; then
         pass "GPU nodes detected: ${GPU_NODES} node(s) with nvidia.com/gpu capacity"
+        ENABLE_GPU_VAR=$(get_var "enable_gpu")
+        if [[ "$ENABLE_GPU_VAR" == "true" ]]; then
+          pass "enable_gpu = true — NFD and NVIDIA GPU Operator will be deployed by ArgoCD"
+        else
+          warn "GPU nodes found but enable_gpu is not set to true in terraform.tfvars"
+          if [[ -t 0 && -f "$TFVARS_FILE" ]]; then
+            echo ""
+            read -r -p "  $(echo -e "${YELLOW}?${NC}")  Enable GPU support now? This sets enable_gpu = true in terraform.tfvars [y/N]: " GPU_REPLY </dev/tty
+            echo ""
+            if [[ "$GPU_REPLY" =~ ^[Yy]$ ]]; then
+              if grep -qE "^[[:space:]]*(#[[:space:]]*)?enable_gpu[[:space:]]*=" "$TFVARS_FILE"; then
+                sed -i.bak 's|^[[:space:]]*#*[[:space:]]*enable_gpu[[:space:]]*=.*|enable_gpu = true|' "$TFVARS_FILE"
+              else
+                echo 'enable_gpu = true' >> "$TFVARS_FILE"
+              fi
+              pass "enable_gpu = true written to terraform.tfvars — NFD and GPU Operator will be deployed"
+            else
+              info "Skipped — set 'enable_gpu = true' in terraform.tfvars before running terraform apply"
+            fi
+          else
+            info "Set 'enable_gpu = true' in terraform.tfvars to auto-install NFD and GPU Operator via ArgoCD"
+          fi
+        fi
       else
-        info "No GPU nodes detected — GPU nodes are optional but recommended for ML training"
+        info "No GPU nodes detected — enable_gpu remains false (default)"
       fi
 
       # ─── 7. Existing installation check ───────────────────────────────────

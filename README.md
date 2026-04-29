@@ -22,29 +22,27 @@ Terraform bootstrap + GitOps manifests for deploying a production-ready AI/ML pl
 │  │                          │  ApplicationSet (git directory generator)  │  │
 │  └──────────────────────────┼──────────────────────────────────────────-┘  │
 │                             │                                               │
-│        ┌────────────────────┼────────────────────────────────┐             │
-│        │                   │                                 │             │
-│        ▼                   ▼                                 ▼             │
-│  ┌───────────┐  ┌─────────────────────┐  ┌───────────────────────────┐   │
-│  │Namespaces │  │  Platform Operators  │  │        Monitoring         │   │
-│  │ (wave -5) │  │    (waves 0 → 1)     │  │      (waves -5 → 15)      │   │
-│  │           │  │                     │  │                           │   │
-│  │cert-mgr-  │  │ ┌─────────────────┐ │  │ ┌─────────────────────┐  │   │
-│  │ operator  │  │ │  cert-manager   │ │  │ │  User Workload      │  │   │
-│  │kueue-op   │  │ └─────────────────┘ │  │ │  Monitoring         │  │   │
-│  │jobset-op  │  │ ┌─────────────────┐ │  │ │  (Prometheus)       │  │   │
-│  │rhsso      │  │ │ Kueue + JobSet  │ │  │ └─────────────────────┘  │   │
-│  │ext-secret │  │ └─────────────────┘ │  │ ┌─────────────────────┐  │   │
-│  │grafana    │  │ ┌─────────────────┐ │  │ │  Grafana Operator   │  │   │
-│  │rhoai-     │  │ │  OCP Pipelines  │ │  │ │  (ML dashboards)    │  │   │
-│  │model-reg  │  │ └─────────────────┘ │  │ └─────────────────────┘  │   │
-│  │data-sci-  │  │ ┌─────────────────┐ │  └───────────────────────────┘   │
-│  │ project   │  │ │  Red Hat SSO    │ │                                   │
-│  └───────────┘  │ └─────────────────┘ │                                   │
-│                 │ ┌─────────────────┐ │                                   │
-│                 │ │ Ext Secrets Op  │ │                                   │
-│                 │ └─────────────────┘ │                                   │
-│                 └─────────────────────┘                                   │
+│              ┌──────────────┴──────────────────────────────────────┐        │
+│              │  gitops/core/*  (always deployed)                   │        │
+│              │                                                      │        │
+│        ┌─────┴──────┐  ┌──────────────────┐  ┌───────────────────┐│        │
+│        │ Namespaces │  │Platform Operators │  │    Monitoring     ││        │
+│        │ (wave -5)  │  │  (waves 0 → 1)   │  │  (waves -5→15)   ││        │
+│        │            │  │                  │  │                   ││        │
+│        │cert-mgr-op │  │ cert-manager     │  │ User Workload     ││        │
+│        │kueue-op    │  │ Kueue + JobSet   │  │ Monitoring        ││        │
+│        │jobset-op   │  │ OCP Pipelines    │  │ (Prometheus)      ││        │
+│        │rhsso       │  │ Red Hat SSO      │  │                   ││        │
+│        │ext-secrets │  │ Ext Secrets Op   │  │ Grafana Operator  ││        │
+│        │grafana     │  └──────────────────┘  │ (ML dashboards)  ││        │
+│        │rhoai-regs  │                         └───────────────────┘│        │
+│        │data-sci-   │  ┌──────────────────────────────────────────┐│        │
+│        │ project    │  │  Object Storage (wave 5)                 ││        │
+│        └────────────┘  │  AWS S3 via External Secrets Operator    ││        │
+│                        │  s3-credentials → redhat-ods-applications││        │
+│                        └──────────────────────────────────────────┘│        │
+│                                                                      │        │
+│              └──────────────────────────────────────────────────────┘        │
 │                                                                             │
 │  ┌───────────────────────────────────────────────────────────────────────┐  │
 │  │         Red Hat OpenShift AI 3.4   (waves 1 → 20)                    │  │
@@ -57,10 +55,10 @@ Terraform bootstrap + GitOps manifests for deploying a production-ready AI/ML pl
 │  │  │    Ray      │  │  Training   │  │  TrustyAI    │  │  Model    │  │  │
 │  │  │(dist train) │  │  Operator   │  │  (bias/xai)  │  │ Registry  │  │  │
 │  │  └─────────────┘  └─────────────┘  └──────────────┘  └───────────┘  │  │
-│  │  ┌─────────────┐  ┌─────────────┐  ┌──────────────┐                 │  │
-│  │  │   Kueue     │  │   MLflow    │  │  Feast Store │                 │  │
-│  │  │(batch mgmt) │  │ (exp track) │  │  (optional)  │                 │  │
-│  │  └─────────────┘  └─────────────┘  └──────────────┘                 │  │
+│  │  ┌─────────────┐  ┌─────────────┐                                   │  │
+│  │  │   Kueue     │  │   MLflow    │                                   │  │
+│  │  │(batch mgmt) │  │ (exp track) │                                   │  │
+│  │  └─────────────┘  └─────────────┘                                   │  │
 │  └───────────────────────────────────────────────────────────────────────┘  │
 │                                                                             │
 │  ┌───────────────────────────────────────────────────────────────────────┐  │
@@ -69,6 +67,17 @@ Terraform bootstrap + GitOps manifests for deploying a production-ready AI/ML pl
 │  │   Jupyter Notebooks  ·  AI Pipeline runs  ·  KServe endpoints         │  │
 │  │   MLflow experiments  ·  Model Registry entries                       │  │
 │  └───────────────────────────────────────────────────────────────────────┘  │
+│                                                                             │
+│  ╔═══════════════════════════════════════════════════════════════════════╗  │
+│  ║   gitops/opt/*  (conditional — deployed only when enable_gpu = true) ║  │
+│  ║                                                                       ║  │
+│  ║   ┌─────────────────────────────┐  ┌────────────────────────────┐   ║  │
+│  ║   │  Node Feature Discovery     │  │  NVIDIA GPU Operator       │   ║  │
+│  ║   │  (openshift-nfd)            │→ │  (nvidia-gpu-operator)     │   ║  │
+│  ║   │  Labels GPU worker nodes    │  │  Drivers · Device Plugin   │   ║  │
+│  ║   │  waves 0-5                  │  │  DCGM Exporter · wave 10   │   ║  │
+│  ║   └─────────────────────────────┘  └────────────────────────────┘   ║  │
+│  ╚═══════════════════════════════════════════════════════════════════════╝  │
 └─────────────────────────────────────────────────────────────────────────────┘
 
 Bootstrap flow:
@@ -76,6 +85,7 @@ Bootstrap flow:
        │
        ▼  Phase 0 — preflight (validate-tfvars.sh + check-cluster-prereqs.sh)
        │  Validates tfvars · OCP 4.19+ · cluster-admin · OperatorHub READY
+       │  check-cluster-prereqs.sh warns if GPU nodes detected but enable_gpu = false
        │
        ▼  Phase 1 — GitOps operator subscription
        │
@@ -83,9 +93,13 @@ Bootstrap flow:
        │
        ▼  Phase 3 — grant ArgoCD cluster-admin
        │
-       ▼  Phase 4 — render + apply ApplicationSet
+       ▼  Phase 4 — render ApplicationSet from template
+       │            enable_gpu=false → watches gitops/core/* only
+       │            enable_gpu=true  → also adds gitops/opt/nfd + gitops/opt/gpu
+       │
+       ▼  Phase 5 — apply ApplicationSet
                          │
-              ┌──────────┘  Discovers gitops/core/*
+              ┌──────────┘  Discovers configured paths
               │             Creates one Application per directory
               │             Sync waves sequence the install order
               ▼
@@ -115,12 +129,12 @@ Bootstrap flow:
 
 ### Optional components (`gitops/opt/`)
 
-Not auto-deployed. Copy the relevant directory into `gitops/core/` to enable.
+Not deployed by default. Set `enable_gpu = true` in `terraform.tfvars` and re-run `terraform apply` to include them automatically via the ApplicationSet.
 
 | Component | When to enable |
 |-----------|---------------|
-| **Node Feature Discovery (NFD)** | Required if the cluster has GPU or other specialised hardware. Labels nodes with hardware capabilities so the GPU Operator can target them. Package `nfd`, channel `stable`, from `redhat-operators`. |
-| **NVIDIA GPU Operator** | Required for NVIDIA GPU nodes. Installs drivers, the device plugin, DCGM exporter, and configures the container runtime. Must be installed after NFD. Package `gpu-operator-certified`, channel `v26.3`, from `certified-operators`. |
+| **Node Feature Discovery (NFD)** | Required if the cluster has NVIDIA GPU worker nodes. Labels nodes with hardware capabilities so the GPU Operator can target them. Package `nfd`, channel `stable`, from `redhat-operators`. |
+| **NVIDIA GPU Operator** | Required for NVIDIA GPU nodes. Installs drivers, the device plugin, DCGM exporter, and configures the container runtime. Deployed after NFD (wave ordering enforced). Package `gpu-operator-certified`, channel `v26.3`, from `certified-operators`. |
 
 ---
 
@@ -269,7 +283,7 @@ oc get secret openshift-gitops-cluster -n openshift-gitops \
     │   ├── external-secrets/         # External Secrets Operator (wave 1)
     │   ├── monitoring/               # Prometheus config + Grafana (waves -5 to 15)
     │   └── data-science-project/     # Tenant namespace + RBAC (wave 20)
-    └── opt/                          # Optional components — copy to core/ to enable
+    └── opt/                          # Optional components — enabled via enable_gpu tfvar
         ├── nfd/                      # Node Feature Discovery (GPU node labelling)
         └── gpu/                      # NVIDIA GPU Operator + ClusterPolicy
 ```
@@ -297,37 +311,24 @@ KServe is enabled by default in this configuration (`managementState: Managed`) 
 
 ### GPU support — Node Feature Discovery + NVIDIA GPU Operator
 
-Required only when the cluster has NVIDIA GPU nodes. Both directories are ready to use in `gitops/opt/`.
+Required only when the cluster has NVIDIA GPU worker nodes. The manifests live in `gitops/opt/nfd` and `gitops/opt/gpu`; no file copying is needed.
+
+**Enable via Terraform flag:**
+
+```hcl
+# bootstrap/terraform.tfvars
+enable_gpu = true
+```
+
+Then re-apply:
 
 ```bash
-cp -r gitops/opt/nfd  gitops/core/nfd
-cp -r gitops/opt/gpu  gitops/core/gpu
+terraform apply
 ```
 
-Add the two namespaces to `gitops/core/namespaces/namespaces.yaml`:
+Terraform re-renders the ApplicationSet to also watch `gitops/opt/nfd` and `gitops/opt/gpu`. ArgoCD picks up both directories automatically on the next sync. NFD runs at waves 0–5 and labels GPU nodes; the GPU ClusterPolicy runs at wave 10 once nodes are labelled.
 
-```yaml
----
-apiVersion: v1
-kind: Namespace
-metadata:
-  name: openshift-nfd
-  annotations:
-    argocd.argoproj.io/sync-wave: "-5"
-  labels:
-    openshift.io/cluster-monitoring: "true"
----
-apiVersion: v1
-kind: Namespace
-metadata:
-  name: nvidia-gpu-operator
-  annotations:
-    argocd.argoproj.io/sync-wave: "-5"
-  labels:
-    openshift.io/cluster-monitoring: "true"
-```
-
-Commit and push — ArgoCD picks up the new directories automatically. NFD runs at waves 0–5 and labels GPU nodes; the GPU ClusterPolicy runs at wave 10 once nodes are labelled.
+> The `check-cluster-prereqs.sh` script will warn if it detects GPU-capable nodes but `enable_gpu` is not set to `true`.
 
 ### S3 object storage — pre-requisite setup
 

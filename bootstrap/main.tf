@@ -76,7 +76,7 @@ resource "null_resource" "wait_gitops" {
           echo "  ✘  Timeout waiting for GitOps operator CSV after 10 minutes"
           exit 1
         fi
-        echo "  ·  Attempt $i/60 — CSV status: ${STATUS:-pending}"
+        echo "  ·  Attempt $i/60 — CSV status: $${STATUS:-pending}"
         sleep 10
       done
 
@@ -164,6 +164,7 @@ resource "local_file" "applicationset" {
     gitops_repo_url        = var.gitops_repo_url
     gitops_repo_revision   = var.gitops_repo_revision
     gitops_components_path = var.gitops_components_path
+    enable_gpu             = var.enable_gpu
   })
   filename        = "${path.module}/.rendered/applicationset.yaml"
   file_permission = "0644"

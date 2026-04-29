@@ -43,6 +43,22 @@ variable "gitops_components_path" {
   default     = "gitops/core"
 }
 
+# ─── Optional Operators ──────────────────────────────────────────────────────
+
+variable "enable_gpu" {
+  description = <<-EOT
+    Set to true if the cluster has NVIDIA GPU worker nodes.
+    When enabled, Terraform includes gitops/opt/nfd and gitops/opt/gpu in the
+    ApplicationSet so ArgoCD automatically installs:
+      - Node Feature Discovery (labels GPU nodes with hardware capabilities)
+      - NVIDIA GPU Operator (drivers, device plugin, DCGM exporter)
+    The check-cluster-prereqs.sh script will warn if GPU nodes are detected
+    but this flag is not set.
+  EOT
+  type    = bool
+  default = false
+}
+
 # ─── Private Repository (optional) ───────────────────────────────────────────
 
 variable "git_username" {
