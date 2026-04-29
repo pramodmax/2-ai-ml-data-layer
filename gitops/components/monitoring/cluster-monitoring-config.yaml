@@ -1,0 +1,13 @@
+# Enables user workload monitoring in the built-in OpenShift Prometheus stack.
+# This allows application and RHOAI components to expose custom metrics that
+# are scraped by Prometheus and queryable via the Thanos Querier.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cluster-monitoring-config
+  namespace: openshift-monitoring
+  annotations:
+    argocd.argoproj.io/sync-wave: "-5"
+data:
+  config.yaml: |
+    enableUserWorkload: true

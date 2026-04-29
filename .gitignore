@@ -1,0 +1,18 @@
+# Terraform
+bootstrap/.terraform/
+bootstrap/.terraform.lock.hcl
+bootstrap/terraform.tfvars
+bootstrap/.rendered/
+
+# Shell history
+.history
+**/.history
+*.history
+
+# macOS
+.DS_Store
+
+# Editor
+.idea/
+.vscode/
+*.swp

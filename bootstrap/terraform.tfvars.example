@@ -1,0 +1,31 @@
+# ─── Copy this file to terraform.tfvars and fill in your values ──────────────
+# terraform.tfvars is listed in .gitignore — never commit it.
+
+# ─── Cluster Access ───────────────────────────────────────────────────────────
+
+# Path to the cluster kubeconfig. If you used 1-ocp-on-aws to create the cluster:
+kubeconfig_path = "../1-ocp-on-aws/clusters/demo-ocp/auth/kubeconfig"
+
+# Kubernetes context — leave empty to use the current context in the kubeconfig
+kubeconfig_context = ""
+
+# Name of your OpenShift cluster (must match the cluster name from 1-ocp-on-aws)
+cluster_name = "demo-ocp"
+
+# ─── GitOps Repository ────────────────────────────────────────────────────────
+
+# URL of your fork/clone of this repository.
+# ArgoCD will sync all AI/ML components from this URL.
+gitops_repo_url = "https://github.com/your-org/2-ai-ml-data-layer.git"
+
+# Branch ArgoCD tracks
+gitops_repo_revision = "main"
+
+# Path within the repo to the component directories (default is correct)
+gitops_components_path = "gitops/components"
+
+# ─── Private Repository (optional) ───────────────────────────────────────────
+# Leave empty if the repository is public.
+
+# git_username = "your-github-username"
+# git_token    = "ghp_your_personal_access_token"

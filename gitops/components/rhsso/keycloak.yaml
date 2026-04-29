@@ -1,0 +1,17 @@
+# Keycloak CR provisions the Red Hat SSO instance.
+# externalAccess creates an OpenShift Route so the SSO console is reachable
+# outside the cluster. Used to configure OpenShift OAuth identity provider and
+# provide OIDC tokens for RHOAI workbench authentication.
+apiVersion: keycloak.org/v1alpha1
+kind: Keycloak
+metadata:
+  name: rhsso
+  namespace: rhsso
+  annotations:
+    argocd.argoproj.io/sync-wave: "15"
+spec:
+  instances: 1
+  externalAccess:
+    enabled: true
+  podDisruptionBudget:
+    enabled: true

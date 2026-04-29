@@ -1,0 +1,16 @@
+# OpenShift Pipelines is a cluster-scoped operator installed into openshift-operators.
+# That namespace already has a global AllNamespaces OperatorGroup — no separate
+# OperatorGroup needed.
+apiVersion: operators.coreos.com/v1alpha1
+kind: Subscription
+metadata:
+  name: openshift-pipelines-operator-rh
+  namespace: openshift-operators
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+spec:
+  channel: latest
+  installPlanApproval: Automatic
+  name: openshift-pipelines-operator-rh
+  source: redhat-operators
+  sourceNamespace: openshift-marketplace

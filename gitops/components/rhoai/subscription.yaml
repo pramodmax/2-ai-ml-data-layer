@@ -1,0 +1,16 @@
+# Red Hat OpenShift AI 3.4
+# Package: rhoai | Channel: stable (tracks latest stable — 3.4 as of April 2026)
+# Operator namespace: redhat-ods-operator
+apiVersion: operators.coreos.com/v1alpha1
+kind: Subscription
+metadata:
+  name: rhoai
+  namespace: redhat-ods-operator
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+spec:
+  channel: stable
+  installPlanApproval: Automatic
+  name: rhoai
+  source: redhat-operators
+  sourceNamespace: openshift-marketplace

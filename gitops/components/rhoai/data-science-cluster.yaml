@@ -1,0 +1,46 @@
+# DataScienceCluster is a singleton cluster-scoped CR that enables/disables
+# individual RHOAI components. Adjust managementState per component need:
+#   Managed  = RHOAI installs and manages the component
+#   Removed  = component is not installed
+apiVersion: datasciencecluster.opendatahub.io/v1
+kind: DataScienceCluster
+metadata:
+  name: default-dsc
+  annotations:
+    argocd.argoproj.io/sync-wave: "15"
+spec:
+  components:
+    # User-facing dashboard for managing projects, notebooks, and pipelines
+    dashboard:
+      managementState: Managed
+
+    # Jupyter notebook environments (VS Code, RStudio also supported)
+    workbenches:
+      managementState: Managed
+
+    # ML pipeline orchestration built on Tekton (Kubeflow Pipelines v2)
+    datasciencepipelines:
+      managementState: Managed
+
+    # Model serving via ModelMesh — multi-model, resource-efficient
+    modelmeshserving:
+      managementState: Managed
+
+    # Single-model serving via KServe — requires Service Mesh + Serverless
+    # Set to Managed only after installing those operators
+    kserve:
+      managementState: Removed
+
+    # CodeFlare + Ray for distributed ML training and batch jobs
+    codeflare:
+      managementState: Managed
+    ray:
+      managementState: Managed
+
+    # Training Operator for PyTorchJob, TFJob, etc.
+    trainingoperator:
+      managementState: Managed
+
+    # TrustyAI for model bias detection and explainability
+    trustyai:
+      managementState: Managed

@@ -1,0 +1,21 @@
+# DSCInitialization is a singleton cluster-scoped CR that configures the
+# shared infrastructure for RHOAI (monitoring namespace, CA bundle, service mesh).
+# KServe is disabled here to avoid the OpenShift Service Mesh dependency.
+# Enable it later by setting serviceMesh.managementState: Managed and adding
+# the Service Mesh and Serverless operator components.
+apiVersion: dscinitialization.opendatahub.io/v1
+kind: DSCInitialization
+metadata:
+  name: default-dsci
+  annotations:
+    argocd.argoproj.io/sync-wave: "10"
+spec:
+  applicationsNamespace: redhat-ods-applications
+  monitoring:
+    managementState: Managed
+    namespace: redhat-ods-monitoring
+  serviceMesh:
+    managementState: Removed
+  trustedCABundle:
+    managementState: Managed
+    customCABundle: ""

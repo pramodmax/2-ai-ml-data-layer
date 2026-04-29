@@ -1,0 +1,22 @@
+# Configures the user workload Prometheus instance that scrapes metrics
+# from AI/ML workloads, RHOAI model servers, and pipeline runs.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: user-workload-monitoring-config
+  namespace: openshift-user-workload-monitoring
+  annotations:
+    argocd.argoproj.io/sync-wave: "-5"
+data:
+  config.yaml: |
+    prometheus:
+      retention: 15d
+      resources:
+        requests:
+          cpu: 200m
+          memory: 1Gi
+        limits:
+          cpu: "1"
+          memory: 2Gi
+    alertmanager:
+      enabled: true

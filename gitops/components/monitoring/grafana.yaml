@@ -1,0 +1,55 @@
+# Grafana instance with an OpenShift Route for external access.
+# After this is running, add a GrafanaDatasource pointing to the Thanos Querier
+# at https://thanos-querier.openshift-monitoring.svc.cluster.local:9091
+# using a ServiceAccount token with cluster-monitoring-view ClusterRole.
+apiVersion: grafana.integreatly.org/v1beta1
+kind: Grafana
+metadata:
+  name: grafana
+  namespace: grafana
+  labels:
+    dashboards: grafana
+  annotations:
+    argocd.argoproj.io/sync-wave: "15"
+spec:
+  config:
+    auth:
+      disable_login_form: "false"
+    auth.anonymous:
+      enabled: "false"
+    log:
+      mode: console
+  deployment:
+    spec:
+      template:
+        spec:
+          containers:
+          - name: grafana
+            resources:
+              requests:
+                cpu: 100m
+                memory: 256Mi
+              limits:
+                cpu: 500m
+                memory: 512Mi
+  route:
+    spec:
+      tls:
+        termination: edge
+        insecureEdgeTerminationPolicy: Redirect
+---
+# ClusterRole so Grafana can query Thanos Querier metrics
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: grafana-cluster-monitoring-view
+  annotations:
+    argocd.argoproj.io/sync-wave: "15"
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: cluster-monitoring-view
+subjects:
+- kind: ServiceAccount
+  name: grafana-sa
+  namespace: grafana
