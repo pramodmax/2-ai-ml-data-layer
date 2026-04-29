@@ -2,11 +2,39 @@ locals {
   oc = "oc --kubeconfig='${var.kubeconfig_path}'"
 }
 
+# ─── Phase 0: Validate inputs and cluster prerequisites ───────────────────────
+# Runs two scripts before any cluster resources are touched:
+#   validate-tfvars.sh   — checks all required tfvars are filled in
+#   check-cluster-prereqs.sh — checks OCP version, permissions, OperatorHub
+
+resource "null_resource" "preflight" {
+  provisioner "local-exec" {
+    command     = <<-EOT
+      set -eo pipefail
+      "${path.module}/scripts/validate-tfvars.sh"
+      "${path.module}/scripts/check-cluster-prereqs.sh"
+    EOT
+    working_dir = path.module
+    environment = {
+      TFVARS_PATH        = "${path.module}/terraform.tfvars"
+      KUBECONFIG_OVERRIDE = var.kubeconfig_path
+    }
+  }
+
+  triggers = {
+    kubeconfig_path  = var.kubeconfig_path
+    cluster_name     = var.cluster_name
+    gitops_repo_url  = var.gitops_repo_url
+  }
+}
+
 # ─── Phase 1: Install OpenShift GitOps Operator ───────────────────────────────
 # The subscription installs the operator from OperatorHub. The operator then
 # automatically provisions an ArgoCD instance in the openshift-gitops namespace.
 
 resource "kubernetes_manifest" "gitops_subscription" {
+  depends_on = [null_resource.preflight]
+
   manifest = {
     apiVersion = "operators.coreos.com/v1alpha1"
     kind       = "Subscription"
