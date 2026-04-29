@@ -72,14 +72,24 @@ Terraform bootstrap + GitOps manifests for deploying a production-ready AI/ML pl
 └─────────────────────────────────────────────────────────────────────────────┘
 
 Bootstrap flow:
-  terraform apply  →  GitOps operator  →  ArgoCD ready  →  ApplicationSet
-                                                              │
-                      ┌────────────────────────────────────── ┘
-                      │  Discovers gitops/components/*
-                      │  Creates one Application per directory
-                      │  Sync waves sequence the install order
-                      ▼
-              All components installed and self-healing
+  terraform apply
+       │
+       ▼  Phase 0 — preflight (validate-tfvars.sh + check-cluster-prereqs.sh)
+       │  Validates tfvars · OCP 4.19+ · cluster-admin · OperatorHub READY
+       │
+       ▼  Phase 1 — GitOps operator subscription
+       │
+       ▼  Phase 2 — wait for ArgoCD ready
+       │
+       ▼  Phase 3 — grant ArgoCD cluster-admin
+       │
+       ▼  Phase 4 — render + apply ApplicationSet
+                         │
+              ┌──────────┘  Discovers gitops/components/*
+              │             Creates one Application per directory
+              │             Sync waves sequence the install order
+              ▼
+      All components installed and self-healing
 ```
 
 ---
@@ -121,15 +131,30 @@ ArgoCD applies resources in ascending wave order. This ensures dependencies (nam
 
 ## Prerequisites
 
+### Local tools
+
 | Tool | Minimum version |
 |------|----------------|
 | `terraform` | 1.5.0 |
 | `oc` | 4.19+ |
 | `git` | 2.x |
 
-The target cluster must be running **OCP 4.19 or 4.20** with internet access to `registry.redhat.io` and `quay.io` (or a configured mirror registry).
+### Cluster requirements
+
+| Requirement | Minimum |
+|-------------|---------|
+| OpenShift Container Platform | **4.19** (4.20 for llm-d distributed inference) |
+| Worker nodes | 2 (3+ recommended) |
+| Allocatable worker CPU | 16 cores across all workers |
+| Allocatable worker memory | 64 GiB across all workers |
+| GPU nodes | Optional — recommended for ML training workloads |
+| Caller permissions | `cluster-admin` |
+| OperatorHub | `redhat-operators` and `community-operators` CatalogSources READY |
+| Registry access | `registry.redhat.io` and `quay.io` (or a configured mirror registry) |
 
 > **Note:** RHOAI 3.4 is an Early Access release. OCP 4.20 is required only if using distributed inference with llm-d.
+
+Run `bootstrap/scripts/check-cluster-prereqs.sh` to verify all of the above before applying Terraform.
 
 ---
 
@@ -152,7 +177,21 @@ cp terraform.tfvars.example terraform.tfvars
 vi terraform.tfvars   # fill in kubeconfig_path, cluster_name, gitops_repo_url
 ```
 
-### 3 — Run bootstrap
+### 3 — Validate inputs and check cluster prerequisites
+
+Run the two preflight scripts before touching the cluster. They catch misconfigured tfvars and cluster issues early.
+
+```bash
+# Check that all required tfvars are filled in
+./scripts/validate-tfvars.sh
+
+# Verify OCP version, permissions, OperatorHub, and node capacity
+./scripts/check-cluster-prereqs.sh
+```
+
+Both scripts are also run automatically as the first step of `terraform apply` (phase 0), so Terraform will abort with a clear error if either check fails.
+
+### 4 — Run bootstrap
 
 ```bash
 terraform init
@@ -161,14 +200,15 @@ terraform apply
 ```
 
 Terraform will:
-1. Install the OpenShift GitOps operator (~3 min)
-2. Wait for ArgoCD to be ready
-3. Grant ArgoCD cluster-wide access
-4. Apply the ApplicationSet pointing at your fork
+1. **Preflight** — validate tfvars and cluster prerequisites
+2. Install the OpenShift GitOps operator (~3 min)
+3. Wait for ArgoCD to be ready
+4. Grant ArgoCD cluster-wide access
+5. Apply the ApplicationSet pointing at your fork
 
 ArgoCD then takes over and installs all remaining components in sync-wave order (~20–40 min depending on pull rate).
 
-### 4 — Monitor progress
+### 5 — Monitor progress
 
 ```bash
 # Watch applications sync
@@ -193,9 +233,12 @@ oc get secret openshift-gitops-cluster -n openshift-gitops \
 ```
 2-ai-ml-data-layer/
 ├── bootstrap/                        # Terraform — run once to seed the cluster
+│   ├── scripts/
+│   │   ├── validate-tfvars.sh        # Validates terraform.tfvars before apply
+│   │   └── check-cluster-prereqs.sh  # Checks OCP version, permissions, capacity
 │   ├── versions.tf
 │   ├── variables.tf
-│   ├── main.tf                       # GitOps operator + ApplicationSet bootstrap
+│   ├── main.tf                       # Preflight + GitOps operator + ApplicationSet
 │   ├── outputs.tf
 │   └── terraform.tfvars.example
 │
