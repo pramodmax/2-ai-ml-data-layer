@@ -113,9 +113,9 @@ echo ""
 
 GITOPS_URL=$(get_var "gitops_repo_url")
 if [[ -z "$GITOPS_URL" ]]; then
-  fail "gitops_repo_url is empty"
+  warn "gitops_repo_url is not set — ArgoCD will have no repo to sync from until you set this"
 elif [[ "$GITOPS_URL" == *"your-org"* ]] || [[ "$GITOPS_URL" == *"your-repo"* ]]; then
-  fail "gitops_repo_url is still the placeholder value — set the URL of your fork"
+  warn "gitops_repo_url looks like the example placeholder — update it to your actual repository URL"
 elif [[ "$GITOPS_URL" != http* ]] && [[ "$GITOPS_URL" != git@* ]]; then
   fail "gitops_repo_url '${GITOPS_URL}' does not look like a valid git URL (expected https:// or git@)"
 else
@@ -198,19 +198,6 @@ for f in "${FAILED[@]}"; do
       echo -e "  ${RED}✘${NC}  ${BOLD}cluster_name${NC}"
       echo "     Set a short lowercase identifier for this cluster (3–28 chars):"
       echo "       cluster_name = \"my-ai-cluster\""
-      echo ""
-      ;;
-    *"gitops_repo_url"*"empty"*)
-      echo -e "  ${RED}✘${NC}  ${BOLD}gitops_repo_url${NC}"
-      echo "     Set the URL of your fork of this repository:"
-      echo "       gitops_repo_url = \"https://github.com/your-org/2-ai-ml-data-layer.git\""
-      echo "     ArgoCD will sync all AI/ML components from this URL."
-      echo ""
-      ;;
-    *"gitops_repo_url"*"placeholder"*)
-      echo -e "  ${RED}✘${NC}  ${BOLD}gitops_repo_url${NC}"
-      echo "     Replace the placeholder with your actual forked repository URL:"
-      echo "       gitops_repo_url = \"https://github.com/<your-org>/2-ai-ml-data-layer.git\""
       echo ""
       ;;
     *"git_username"*"git_token"* | *"git_token"*"git_username"*)
