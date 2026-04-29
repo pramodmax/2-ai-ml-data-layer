@@ -1,0 +1,23 @@
+apiVersion: mlflow.opendatahub.io/v1
+kind: MLflow
+metadata:
+  name: mlflow
+  namespace: redhat-ods-applications
+  annotations:
+    argocd.argoproj.io/sync-wave: "20"
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+spec:
+  # Persistent storage for the SQLite backend and artifact store.
+  # For production: replace backendStoreUri with a PostgreSQL or MySQL URI
+  # and replace artifactsDestination with an S3/OBC URI.
+  storage:
+    accessModes:
+    - ReadWriteOnce
+    resources:
+      requests:
+        storage: 20Gi
+  backendStoreUri: "sqlite:////mlflow/mlflow.db"
+  artifactsDestination: "file:///mlflow/artifacts"
+  serveArtifacts: true
+  image:
+    imagePullPolicy: Always
