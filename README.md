@@ -102,6 +102,7 @@ Bootstrap flow:
 | **cert-manager** | `openshift-cert-manager-operator` | Required by KServe for TLS certificate management on model-serving endpoints. Also needed by Kueue and distributed inference workloads. Red Hat supported operator (`stable-v1` channel). |
 | **Kueue** | `openshift-kueue-operator` | Batch workload queue management for AI training jobs. Controls resource quotas and job priorities across Ray, PyTorch, and Kubeflow Training workloads. |
 | **JobSet** | `openshift-jobset-operator` | Kubernetes JobSet API — required dependency for Kueue and distributed training jobs (multi-node PyTorch, etc.). |
+| **Object Storage (S3)** | `redhat-ods-applications` | S3 credentials injected via External Secrets Operator from AWS Secrets Manager. Required by AI Pipelines for artifact storage and by MLflow for experiment artifacts. Uses native AWS S3 — no in-cluster object store operator needed on AWS IPI. |
 | **OpenShift Pipelines** (Tekton) | `openshift-operators` | CI/CD and ML pipeline orchestration. RHOAI AI Pipelines (Kubeflow v2) uses this as its execution engine for automated model training, evaluation, and promotion workflows. |
 | **Red Hat OpenShift AI 3.4** | `redhat-ods-operator` | Core AI/ML platform. Provides: Dashboard, Jupyter Workbenches, AI Pipelines (Kubeflow v2), KServe model serving, Ray distributed training, TrustyAI explainability, MLflow tracking, Model Registry, and Kueue batch management. |
 | **Model Registry** | `rhoai-model-registries` | Central repository for registering, versioning, and managing the lifecycle of trained models. Enables model governance, lineage tracking, and sharing across teams before deployment. |
@@ -111,6 +112,15 @@ Bootstrap flow:
 | **User Workload Monitoring** | `openshift-monitoring` | Extends the built-in OpenShift Prometheus to scrape metrics from AI/ML workloads, model servers, and pipeline runs. Required for RHOAI's model-serving metrics and TrustyAI fairness monitoring. |
 | **Grafana** | `grafana` | Custom dashboards for GPU utilisation, model inference latency, pipeline throughput, and cluster resource consumption. Connects to OpenShift Thanos Querier. |
 | **Data Science Project** | `data-science-project` | Tenant namespace registered in the RHOAI dashboard. Data scientists create notebooks, run pipelines, and deploy models here. RBAC grants access to the `data-scientists` group via RH SSO. |
+
+### Optional components (`gitops/optional/`)
+
+These are **not auto-installed**. Copy the relevant directory into `gitops/components/` to enable.
+
+| Component | When to enable |
+|-----------|---------------|
+| **Node Feature Discovery (NFD)** | Required if the cluster has GPU or other specialised hardware. Labels nodes with hardware capabilities so the GPU Operator can target them. Package `nfd`, channel `stable`, from `redhat-operators`. |
+| **NVIDIA GPU Operator** | Required for NVIDIA GPU nodes. Installs drivers, the device plugin, DCGM exporter, and configures the container runtime. Must be installed after NFD. Package `gpu-operator-certified`, channel `v26.3`, from `certified-operators`. |
 
 ---
 
@@ -123,9 +133,12 @@ ArgoCD applies resources in ascending wave order. This ensures dependencies (nam
 | `-5` | All namespaces, user workload monitoring ConfigMaps |
 | `0` | OperatorGroups (RHOAI, cert-manager, kueue, jobset, ext-secrets, grafana) |
 | `1` | Subscriptions — cert-manager, Kueue, JobSet, Pipelines, RHOAI, RH SSO, Ext Secrets, Grafana |
+| `5` | ClusterSecretStore (ESO → AWS Secrets Manager), S3 ExternalSecret |
 | `10` | DSCInitialization (waits for RHOAI operator to be `Succeeded`) |
 | `15` | DataScienceCluster, Keycloak, Grafana instance |
 | `20` | MLflow CR instance, Data Science Project RoleBindings |
+
+> **Optional GPU stack** (if enabled): NFD OperatorGroup/Subscription at waves 0-1, NodeFeatureDiscovery CR at wave 5, GPU Operator Subscription at wave 1, ClusterPolicy at wave 10.
 
 ---
 
@@ -242,19 +255,23 @@ oc get secret openshift-gitops-cluster -n openshift-gitops \
 │   ├── outputs.tf
 │   └── terraform.tfvars.example
 │
-└── gitops/                           # ArgoCD manages everything in here
+└── gitops/
     ├── applicationset.yaml.tpl       # Template rendered by Terraform bootstrap
-    └── components/                   # One directory = one ArgoCD Application
-        ├── namespaces/               # All namespaces (wave -5)
-        ├── cert-manager/             # cert-manager operator (waves 0-1)
-        ├── kueue/                    # Kueue + JobSet operators (waves 0-1)
-        ├── openshift-pipelines/      # Tekton operator (wave 1)
-        ├── rhoai/                    # RHOAI 3.4 operator + DSC + DSCI (waves 1-15)
-        ├── mlflow/                   # MLflow CR instance (wave 20)
-        ├── rhsso/                    # Red Hat SSO + Keycloak (waves 1-15)
-        ├── external-secrets/         # External Secrets Operator (wave 1)
-        ├── monitoring/               # Prometheus config + Grafana (waves -5 to 15)
-        └── data-science-project/     # Tenant namespace + RBAC (wave 20)
+    ├── components/                   # Auto-deployed — one directory = one ArgoCD Application
+    │   ├── namespaces/               # All namespaces (wave -5)
+    │   ├── cert-manager/             # cert-manager operator (waves 0-1)
+    │   ├── kueue/                    # Kueue + JobSet operators (waves 0-1)
+    │   ├── object-storage/           # AWS S3 ClusterSecretStore + ExternalSecret (wave 5)
+    │   ├── openshift-pipelines/      # Tekton operator (wave 1)
+    │   ├── rhoai/                    # RHOAI 3.4 operator + DSC + DSCI (waves 1-15)
+    │   ├── mlflow/                   # MLflow CR instance (wave 20)
+    │   ├── rhsso/                    # Red Hat SSO + Keycloak (waves 1-15)
+    │   ├── external-secrets/         # External Secrets Operator (wave 1)
+    │   ├── monitoring/               # Prometheus config + Grafana (waves -5 to 15)
+    │   └── data-science-project/     # Tenant namespace + RBAC (wave 20)
+    └── optional/                     # NOT auto-deployed — copy to components/ to enable
+        ├── nfd/                      # Node Feature Discovery (GPU node labelling)
+        └── gpu/                      # NVIDIA GPU Operator + ClusterPolicy
 ```
 
 ---
@@ -278,6 +295,66 @@ KServe is enabled by default in this configuration (`managementState: Managed`) 
 
 ## Enabling Optional Components
 
+### GPU support — Node Feature Discovery + NVIDIA GPU Operator
+
+Required only when the cluster has NVIDIA GPU nodes. Both directories are ready to use in `gitops/optional/`.
+
+```bash
+cp -r gitops/optional/nfd  gitops/components/nfd
+cp -r gitops/optional/gpu  gitops/components/gpu
+```
+
+Add the two namespaces to `gitops/components/namespaces/namespaces.yaml`:
+
+```yaml
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: openshift-nfd
+  annotations:
+    argocd.argoproj.io/sync-wave: "-5"
+  labels:
+    openshift.io/cluster-monitoring: "true"
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: nvidia-gpu-operator
+  annotations:
+    argocd.argoproj.io/sync-wave: "-5"
+  labels:
+    openshift.io/cluster-monitoring: "true"
+```
+
+Commit and push — ArgoCD picks up the new directories automatically. NFD runs at waves 0–5 and labels GPU nodes; the GPU ClusterPolicy runs at wave 10 once nodes are labelled.
+
+### S3 object storage — pre-requisite setup
+
+`gitops/components/object-storage/` is auto-deployed and configures AWS S3 access. Before ArgoCD syncs it you must:
+
+1. **Create an S3 bucket** in AWS (same region as your cluster):
+   ```bash
+   aws s3 mb s3://my-ocp-ai-artifacts --region us-east-1
+   ```
+
+2. **Store credentials in AWS Secrets Manager:**
+   ```bash
+   aws secretsmanager create-secret \
+     --name "ocp-ai/s3-credentials" \
+     --region us-east-1 \
+     --secret-string '{
+       "accessKeyId":     "AKIA...",
+       "secretAccessKey": "...",
+       "bucketName":      "my-ocp-ai-artifacts",
+       "region":          "us-east-1"
+     }'
+   ```
+
+3. **Update the region** in `gitops/components/object-storage/cluster-secret-store.yaml` if your cluster is not in `us-east-1`.
+
+The `s3-credentials` Kubernetes Secret is then created in `redhat-ods-applications` and referenced by AI Pipelines and MLflow.
+
 ### Feature Store (Feast)
 Set `feastoperator.managementState: Managed` in `gitops/components/rhoai/data-science-cluster.yaml`.
 
@@ -288,7 +365,7 @@ Set `feastoperator.managementState: Managed` in `gitops/components/rhoai/data-sc
 ### MLflow Production Backend
 Edit `gitops/components/mlflow/mlflow.yaml` and replace:
 - `backendStoreUri` with a PostgreSQL connection string
-- `artifactsDestination` with an S3 or OBC URI
+- `artifactsDestination` with the S3 URI (`s3://my-ocp-ai-artifacts/mlflow`)
 
 ---
 
