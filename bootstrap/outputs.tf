@@ -1,6 +1,6 @@
 output "argocd_url" {
   description = "URL of the ArgoCD console."
-  value       = "Run: oc get route openshift-gitops-server -n openshift-gitops -o jsonpath='{.spec.host}'"
+  value       = "Run: oc get route openshift-gitops-server -n openshift-gitops -o jsonpath='https://{.spec.host}'"
 }
 
 output "argocd_password_command" {
@@ -8,27 +8,46 @@ output "argocd_password_command" {
   value       = "oc get secret openshift-gitops-cluster -n openshift-gitops -o jsonpath='{.data.admin\\.password}' | base64 -d"
 }
 
-output "applicationset_name" {
-  description = "Name of the ApplicationSet managing all AI/ML components."
-  value       = "ai-ml-data-layer (namespace: openshift-gitops)"
-}
-
 output "next_steps" {
-  description = "What happens after bootstrap completes."
+  description = "Required steps after terraform apply completes."
   value       = <<-EOT
 
-    Bootstrap complete. ArgoCD is now managing the AI/ML stack via GitOps.
+    ─── Bootstrap complete ───────────────────────────────────────────────────────
 
-    Monitor sync status:
-      oc get applications -n openshift-gitops
+    ArgoCD is running. The root Application (ai-ml-root) has been created with
+    MANUAL sync. Nothing deploys to the cluster until you complete these steps:
 
-    Watch all components reconcile:
-      oc get applicationsets,applications -n openshift-gitops
+    Step 1 — Commit the rendered ApplicationSet to git:
 
-    Check operator installation progress:
-      oc get csv -A
+      git add gitops/applicationset.yaml
+      git commit -m "chore: add rendered ApplicationSet"
+      git push
 
-    Access ArgoCD console:
-      oc get route openshift-gitops-server -n openshift-gitops -o jsonpath='https://{.spec.host}'
+    Step 2 — Open the ArgoCD console and sync the root Application:
+
+      oc get route openshift-gitops-server -n openshift-gitops \
+        -o jsonpath='https://{.spec.host}'
+
+      In the ArgoCD UI: Applications → ai-ml-root → Sync → Synchronize
+
+      Or via CLI:
+      argocd app sync ai-ml-root
+
+    After the root Application syncs, the ApplicationSet is created and ArgoCD
+    automatically deploys all AI/ML components in sync-wave order (~20-40 min).
+
+    ─── Monitor progress ─────────────────────────────────────────────────────────
+
+      # Watch Applications appear and sync
+      oc get applications -n openshift-gitops -w
+
+      # Check operator install status
+      oc get csv -A --watch
+
+    ─── ArgoCD credentials ───────────────────────────────────────────────────────
+
+      oc get secret openshift-gitops-cluster -n openshift-gitops \
+        -o jsonpath='{.data.admin\.password}' | base64 -d && echo
+
   EOT
 }

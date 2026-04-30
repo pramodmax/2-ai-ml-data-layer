@@ -85,23 +85,31 @@ Bootstrap flow:
        │
        ▼  Phase 0 — preflight (validate-tfvars.sh + check-cluster-prereqs.sh)
        │  Validates tfvars · OCP 4.19+ · cluster-admin · OperatorHub READY
-       │  check-cluster-prereqs.sh warns if GPU nodes detected but enable_gpu = false
+       │  Warns if GPU nodes detected but enable_gpu = false
        │
-       ▼  Phase 1 — GitOps operator subscription
+       ▼  Phase 1 — Install GitOps operator (oc apply Subscription)
        │
-       ▼  Phase 2 — wait for ArgoCD ready
+       ▼  Phase 2 — Wait for ArgoCD ready
        │
-       ▼  Phase 3 — grant ArgoCD cluster-admin
+       ▼  Phase 3 — Grant ArgoCD cluster-admin
        │
-       ▼  Phase 4 — render ApplicationSet from template
+       ▼  Phase 4 — Render ApplicationSet → gitops/applicationset.yaml
        │            enable_gpu=false → watches gitops/core/* only
        │            enable_gpu=true  → also adds gitops/opt/nfd + gitops/opt/gpu
        │
-       ▼  Phase 5 — apply ApplicationSet
+       ▼  Phase 5 — Render + apply root Application (ai-ml-root)
+       │            Manual sync — nothing deploys until you trigger it
+       │
+       │  ── Post-terraform manual steps ──────────────────────────────
+       │
+       ▼  git add gitops/applicationset.yaml && git commit && git push
+       │
+       ▼  ArgoCD UI: sync ai-ml-root  (one manual click)
                          │
-              ┌──────────┘  Discovers configured paths
-              │             Creates one Application per directory
-              │             Sync waves sequence the install order
+              ┌──────────┘  Root applies the ApplicationSet from git
+              │             ApplicationSet discovers configured paths
+              │             Creates one child Application per directory
+              │             Child Applications auto-sync in wave order
               ▼
       All components installed and self-healing
 ```
@@ -228,29 +236,49 @@ terraform apply
 
 Terraform will:
 1. **Preflight** — validate tfvars and cluster prerequisites
-2. Install the OpenShift GitOps operator (~3 min)
+2. Install the OpenShift GitOps operator via `oc apply` (~3 min)
 3. Wait for ArgoCD to be ready
 4. Grant ArgoCD cluster-wide access
-5. Apply the ApplicationSet pointing at your fork
+5. Render `gitops/applicationset.yaml` with your repo URL and GPU flag
+6. Apply the root Application (`ai-ml-root`) with **manual sync**
 
-ArgoCD then takes over and installs all remaining components in sync-wave order (~20–40 min depending on pull rate).
+### 5 — Commit the rendered ApplicationSet and trigger the root sync
 
-### 5 — Monitor progress
+After `terraform apply` completes, commit the rendered ApplicationSet so ArgoCD can read it:
 
 ```bash
-# Watch applications sync
+# From the repo root
+git add gitops/applicationset.yaml
+git commit -m "chore: add rendered ApplicationSet"
+git push
+```
+
+Then open the ArgoCD console and manually sync `ai-ml-root`:
+
+```bash
+# Get the ArgoCD console URL
+oc get route openshift-gitops-server -n openshift-gitops \
+  -o jsonpath='https://{.spec.host}'
+
+# Get the admin password
+oc get secret openshift-gitops-cluster -n openshift-gitops \
+  -o jsonpath='{.data.admin\.password}' | base64 -d && echo
+```
+
+In the ArgoCD UI: **Applications → ai-ml-root → Sync → Synchronize**
+
+Or via CLI: `argocd app sync ai-ml-root`
+
+The root Application applies the ApplicationSet, which then creates and auto-syncs all component Applications in wave order (~20–40 min).
+
+### 6 — Monitor progress
+
+```bash
+# Watch Applications appear and sync
 oc get applications -n openshift-gitops -w
 
 # Check operator install status
 oc get csv -A --watch
-
-# Access ArgoCD console
-oc get route openshift-gitops-server -n openshift-gitops \
-  -o jsonpath='https://{.spec.host}{"\n"}'
-
-# Get ArgoCD admin password
-oc get secret openshift-gitops-cluster -n openshift-gitops \
-  -o jsonpath='{.data.admin\.password}' | base64 -d && echo
 ```
 
 ---
@@ -270,7 +298,9 @@ oc get secret openshift-gitops-cluster -n openshift-gitops \
 │   └── terraform.tfvars.example
 │
 └── gitops/
-    ├── applicationset.yaml.tpl       # Template rendered by Terraform bootstrap
+    ├── applicationset.yaml.tpl       # Template — Terraform renders → applicationset.yaml
+    ├── applicationset.yaml           # Rendered by Terraform; commit this to git
+    ├── root-application.yaml.tpl     # Template — Terraform renders + applies root Application
     ├── core/                         # Main components — auto-deployed by ArgoCD
     │   ├── namespaces/               # All namespaces (wave -5)
     │   ├── cert-manager/             # cert-manager operator (waves 0-1)

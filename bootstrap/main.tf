@@ -4,7 +4,7 @@ locals {
 
 # ─── Phase 0: Validate inputs and cluster prerequisites ───────────────────────
 # Runs two scripts before any cluster resources are touched:
-#   validate-tfvars.sh   — checks all required tfvars are filled in
+#   validate-tfvars.sh       — checks all required tfvars are filled in
 #   check-cluster-prereqs.sh — checks OCP version, permissions, OperatorHub
 
 resource "null_resource" "preflight" {
@@ -16,46 +16,53 @@ resource "null_resource" "preflight" {
     EOT
     working_dir = path.module
     environment = {
-      TFVARS_PATH        = "${path.module}/terraform.tfvars"
+      TFVARS_PATH         = "${path.module}/terraform.tfvars"
       KUBECONFIG_OVERRIDE = var.kubeconfig_path
     }
   }
 
   triggers = {
-    kubeconfig_path  = var.kubeconfig_path
-    cluster_name     = var.cluster_name
-    gitops_repo_url  = var.gitops_repo_url
+    kubeconfig_path = var.kubeconfig_path
+    cluster_name    = var.cluster_name
+    gitops_repo_url = var.gitops_repo_url
   }
 }
 
 # ─── Phase 1: Install OpenShift GitOps Operator ───────────────────────────────
-# The subscription installs the operator from OperatorHub. The operator then
-# automatically provisions an ArgoCD instance in the openshift-gitops namespace.
+# Uses oc apply rather than kubernetes_manifest so the plan phase does not
+# require the Subscription CRD schema to be resolved by the provider.
+# The operator automatically provisions an ArgoCD instance in openshift-gitops.
 
-resource "kubernetes_manifest" "gitops_subscription" {
+resource "null_resource" "install_gitops_operator" {
   depends_on = [null_resource.preflight]
 
-  manifest = {
-    apiVersion = "operators.coreos.com/v1alpha1"
-    kind       = "Subscription"
-    metadata = {
-      name      = "openshift-gitops-operator"
-      namespace = "openshift-operators"
-    }
-    spec = {
-      channel             = "latest"
-      installPlanApproval = "Automatic"
-      name                = "openshift-gitops-operator"
-      source              = "redhat-operators"
-      sourceNamespace     = "openshift-marketplace"
-    }
+  provisioner "local-exec" {
+    command = <<-EOT
+      cat <<'YAML' | ${local.oc} apply -f -
+      apiVersion: operators.coreos.com/v1alpha1
+      kind: Subscription
+      metadata:
+        name: openshift-gitops-operator
+        namespace: openshift-operators
+      spec:
+        channel: latest
+        installPlanApproval: Automatic
+        name: openshift-gitops-operator
+        source: redhat-operators
+        sourceNamespace: openshift-marketplace
+      YAML
+    EOT
+  }
+
+  triggers = {
+    subscription = "openshift-gitops-operator"
   }
 }
 
 # ─── Phase 2: Wait for ArgoCD to be ready ─────────────────────────────────────
 
 resource "null_resource" "wait_gitops" {
-  depends_on = [kubernetes_manifest.gitops_subscription]
+  depends_on = [null_resource.install_gitops_operator]
 
   provisioner "local-exec" {
     command = <<-EOT
@@ -103,7 +110,7 @@ resource "null_resource" "wait_gitops" {
   }
 
   triggers = {
-    subscription = kubernetes_manifest.gitops_subscription.manifest["metadata"]["name"]
+    operator = null_resource.install_gitops_operator.id
   }
 }
 
@@ -153,11 +160,15 @@ resource "kubernetes_secret" "argocd_repo_creds" {
   }
 }
 
-# ─── Phase 5: Render and apply the ApplicationSet ─────────────────────────────
-# The ApplicationSet uses the git directory generator to discover every
-# directory under gitops/components/ and create one ArgoCD Application per
-# directory. Adding a new component is a directory drop-in — no Terraform
-# changes needed.
+# ─── Phase 5: Render the ApplicationSet ───────────────────────────────────────
+# Terraform renders the ApplicationSet with real values (repo URL, enable_gpu)
+# and writes it to gitops/applicationset.yaml — a tracked file in this repo.
+#
+# After terraform apply completes:
+#   git add gitops/applicationset.yaml && git commit && git push
+#
+# The root Application (applied in Phase 6) reads this file from git and applies
+# the ApplicationSet when you manually sync it in the ArgoCD console.
 
 resource "local_file" "applicationset" {
   content = templatefile("${path.module}/../gitops/applicationset.yaml.tpl", {
@@ -166,22 +177,42 @@ resource "local_file" "applicationset" {
     gitops_components_path = var.gitops_components_path
     enable_gpu             = var.enable_gpu
   })
-  filename        = "${path.module}/.rendered/applicationset.yaml"
+  filename        = "${path.module}/../gitops/applicationset.yaml"
   file_permission = "0644"
 }
 
-resource "null_resource" "apply_applicationset" {
+# ─── Phase 6: Render and apply the root Application ───────────────────────────
+# The root Application has MANUAL sync. It watches gitops/applicationset.yaml
+# in the git repo. When you manually sync it in ArgoCD:
+#   1. ArgoCD applies the ApplicationSet from git.
+#   2. The ApplicationSet discovers gitops/core/* (and gitops/opt/* if GPU
+#      is enabled) and creates one Application per directory.
+#   3. Each child Application has automated sync and self-heals from git.
+#
+# This gives you a single sync gate: approve the root Application sync once,
+# and the entire AI/ML stack reconciles automatically from that point on.
+
+resource "local_file" "root_application" {
+  content = templatefile("${path.module}/../gitops/root-application.yaml.tpl", {
+    gitops_repo_url      = var.gitops_repo_url
+    gitops_repo_revision = var.gitops_repo_revision
+  })
+  filename        = "${path.module}/.rendered/root-application.yaml"
+  file_permission = "0644"
+}
+
+resource "null_resource" "apply_root_application" {
   depends_on = [
     null_resource.wait_gitops,
     kubernetes_cluster_role_binding.argocd_cluster_admin,
-    local_file.applicationset,
+    local_file.root_application,
   ]
 
   provisioner "local-exec" {
-    command = "${local.oc} apply -f '${local_file.applicationset.filename}'"
+    command = "${local.oc} apply -f '${local_file.root_application.filename}'"
   }
 
   triggers = {
-    content = local_file.applicationset.content
+    content = local_file.root_application.content
   }
 }
