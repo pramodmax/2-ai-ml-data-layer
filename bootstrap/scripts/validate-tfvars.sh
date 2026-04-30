@@ -128,8 +128,12 @@ GITOPS_REVISION="${GITOPS_REVISION:-main}"
 pass "gitops_repo_revision = ${GITOPS_REVISION}"
 
 GITOPS_PATH=$(get_var "gitops_components_path")
-GITOPS_PATH="${GITOPS_PATH:-gitops/components}"
-pass "gitops_components_path = ${GITOPS_PATH}"
+GITOPS_PATH="${GITOPS_PATH:-gitops/core}"
+if [[ "$GITOPS_PATH" == "gitops/components" ]]; then
+  fail "gitops_components_path = 'gitops/components' is the old directory name — update it to 'gitops/core' in terraform.tfvars"
+else
+  pass "gitops_components_path = ${GITOPS_PATH}"
+fi
 
 # ─── Optional: private repo credentials ──────────────────────────────────────
 
