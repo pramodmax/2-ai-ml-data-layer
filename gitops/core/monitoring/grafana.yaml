@@ -11,6 +11,7 @@ metadata:
     dashboards: grafana
   annotations:
     argocd.argoproj.io/sync-wave: "15"
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
 spec:
   config:
     auth:
