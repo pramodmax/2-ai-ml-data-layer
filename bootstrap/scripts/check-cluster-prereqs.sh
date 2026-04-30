@@ -45,7 +45,8 @@ get_var() {
     | head -1 \
     | sed 's/^[^=]*=[[:space:]]*//' \
     | sed 's/^"\([^"]*\)".*/\1/' \
-    | tr -d '\r'
+    | tr -d '\r' \
+    || true
 }
 
 if [[ -f "$TFVARS_FILE" ]]; then
