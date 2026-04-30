@@ -3,9 +3,6 @@ locals {
 }
 
 # ─── Phase 0: Validate inputs and cluster prerequisites ───────────────────────
-# Runs two scripts before any cluster resources are touched:
-#   validate-tfvars.sh       — checks all required tfvars are filled in
-#   check-cluster-prereqs.sh — checks OCP version, permissions, OperatorHub
 
 resource "null_resource" "preflight" {
   provisioner "local-exec" {
@@ -29,33 +26,42 @@ resource "null_resource" "preflight" {
 }
 
 # ─── Phase 1: Install OpenShift GitOps Operator ───────────────────────────────
-# Uses oc apply rather than kubernetes_manifest so the plan phase does not
-# require the Subscription CRD schema to be resolved by the provider.
-# The operator automatically provisions an ArgoCD instance in openshift-gitops.
+# Write the Subscription to a file first — nested bash heredocs inside a
+# Terraform heredoc cause the terminator to remain indented, so bash never
+# closes the document and oc apply receives no input.
+
+resource "local_file" "gitops_subscription" {
+  filename        = "${path.module}/.rendered/gitops-subscription.yaml"
+  file_permission = "0644"
+  content         = <<-YAML
+    apiVersion: operators.coreos.com/v1alpha1
+    kind: Subscription
+    metadata:
+      name: openshift-gitops-operator
+      namespace: openshift-operators
+    spec:
+      channel: latest
+      installPlanApproval: Automatic
+      name: openshift-gitops-operator
+      source: redhat-operators
+      sourceNamespace: openshift-marketplace
+    YAML
+}
 
 resource "null_resource" "install_gitops_operator" {
   depends_on = [null_resource.preflight]
 
   provisioner "local-exec" {
     command = <<-EOT
-      cat <<'YAML' | ${local.oc} apply -f -
-      apiVersion: operators.coreos.com/v1alpha1
-      kind: Subscription
-      metadata:
-        name: openshift-gitops-operator
-        namespace: openshift-operators
-      spec:
-        channel: latest
-        installPlanApproval: Automatic
-        name: openshift-gitops-operator
-        source: redhat-operators
-        sourceNamespace: openshift-marketplace
-      YAML
+      echo ""
+      echo "━━━ Phase 1 — Installing OpenShift GitOps operator ━━━"
+      ${local.oc} apply -f '${local_file.gitops_subscription.filename}'
+      echo "  ✔  Subscription applied"
     EOT
   }
 
   triggers = {
-    subscription = "openshift-gitops-operator"
+    manifest = local_file.gitops_subscription.content
   }
 }
 
@@ -70,17 +76,18 @@ resource "null_resource" "wait_gitops" {
       set -eo pipefail
 
       echo ""
-      echo "━━━ Waiting for OpenShift GitOps operator CSV ━━━"
+      echo "━━━ Phase 2 — Waiting for GitOps operator CSV ━━━"
       for i in $(seq 1 60); do
         STATUS=$(${local.oc} get csv -n openshift-operators \
           -o jsonpath='{.items[?(@.spec.displayName=="Red Hat OpenShift GitOps")].status.phase}' \
           2>/dev/null || true)
         if [[ "$STATUS" == "Succeeded" ]]; then
-          echo "  ✔  GitOps operator CSV is Succeeded"
+          echo "  ✔  GitOps operator CSV — Succeeded"
           break
         fi
         if [[ $i -eq 60 ]]; then
-          echo "  ✘  Timeout waiting for GitOps operator CSV after 10 minutes"
+          echo "  ✘  Timeout: GitOps operator CSV did not reach Succeeded after 10 minutes"
+          echo "     Manual check: oc get csv -n openshift-operators | grep gitops"
           exit 1
         fi
         echo "  ·  Attempt $i/60 — CSV status: $${STATUS:-pending}"
@@ -88,15 +95,15 @@ resource "null_resource" "wait_gitops" {
       done
 
       echo ""
-      echo "━━━ Waiting for ArgoCD server deployment ━━━"
+      echo "━━━ Phase 2 — Waiting for ArgoCD server ━━━"
       ${local.oc} wait --for=condition=Available \
         deployment/openshift-gitops-server \
         -n openshift-gitops \
         --timeout=300s
-      echo "  ✔  ArgoCD server is Available"
+      echo "  ✔  ArgoCD server deployment — Available"
 
       echo ""
-      echo "━━━ Waiting for ArgoCD application controller ━━━"
+      echo "━━━ Phase 2 — Waiting for ArgoCD application controller ━━━"
       ${local.oc} wait --for=condition=Available \
         deployment/openshift-gitops-application-controller \
         -n openshift-gitops \
@@ -105,7 +112,24 @@ resource "null_resource" "wait_gitops" {
         statefulset/openshift-gitops-application-controller \
         -n openshift-gitops \
         --timeout=300s
-      echo "  ✔  ArgoCD application controller is ready"
+      echo "  ✔  ArgoCD application controller — Ready"
+
+      echo ""
+      echo "━━━ Phase 2 — Verification ━━━"
+      echo ""
+      echo "  Operator CSV:"
+      ${local.oc} get csv -n openshift-operators \
+        --no-headers 2>/dev/null \
+        | grep -i gitops \
+        | awk '{printf "    %-45s %s\n", $1, $NF}' \
+        || echo "    (none found)"
+
+      echo ""
+      echo "  ArgoCD pods:"
+      ${local.oc} get pods -n openshift-gitops \
+        --no-headers 2>/dev/null \
+        | awk '{printf "    %-55s %s\n", $1, $3}' \
+        || echo "    (none found)"
     EOT
   }
 
@@ -115,8 +139,6 @@ resource "null_resource" "wait_gitops" {
 }
 
 # ─── Phase 3: Grant ArgoCD cluster-wide access ────────────────────────────────
-# The ArgoCD application controller needs cluster-admin to create operator
-# subscriptions, CRDs, and other cluster-scoped resources on behalf of GitOps.
 
 resource "kubernetes_cluster_role_binding" "argocd_cluster_admin" {
   depends_on = [null_resource.wait_gitops]
@@ -161,14 +183,9 @@ resource "kubernetes_secret" "argocd_repo_creds" {
 }
 
 # ─── Phase 5: Render the ApplicationSet ───────────────────────────────────────
-# Terraform renders the ApplicationSet with real values (repo URL, enable_gpu)
-# and writes it to gitops/applicationset.yaml — a tracked file in this repo.
-#
-# After terraform apply completes:
-#   git add gitops/applicationset.yaml && git commit && git push
-#
-# The root Application (applied in Phase 6) reads this file from git and applies
-# the ApplicationSet when you manually sync it in the ArgoCD console.
+# Terraform renders the ApplicationSet to gitops/applicationset.yaml (tracked).
+# After terraform apply: git add gitops/applicationset.yaml && git commit && push.
+# The root Application reads this file from git when you manually sync it.
 
 resource "local_file" "applicationset" {
   content = templatefile("${path.module}/../gitops/applicationset.yaml.tpl", {
@@ -182,15 +199,8 @@ resource "local_file" "applicationset" {
 }
 
 # ─── Phase 6: Render and apply the root Application ───────────────────────────
-# The root Application has MANUAL sync. It watches gitops/applicationset.yaml
-# in the git repo. When you manually sync it in ArgoCD:
-#   1. ArgoCD applies the ApplicationSet from git.
-#   2. The ApplicationSet discovers gitops/core/* (and gitops/opt/* if GPU
-#      is enabled) and creates one Application per directory.
-#   3. Each child Application has automated sync and self-heals from git.
-#
-# This gives you a single sync gate: approve the root Application sync once,
-# and the entire AI/ML stack reconciles automatically from that point on.
+# ai-ml-root has MANUAL sync. Syncing it once in ArgoCD creates the
+# ApplicationSet, which then auto-deploys all AI/ML components.
 
 resource "local_file" "root_application" {
   content = templatefile("${path.module}/../gitops/root-application.yaml.tpl", {
@@ -210,7 +220,10 @@ resource "null_resource" "apply_root_application" {
 
   provisioner "local-exec" {
     command = <<-EOT
+      echo ""
+      echo "━━━ Phase 6 — Applying root Application (ai-ml-root) ━━━"
       ${local.oc} apply -f '${local_file.root_application.filename}'
+      echo "  ✔  Root Application applied (sync: manual)"
 
       echo ""
       echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
@@ -220,10 +233,11 @@ resource "null_resource" "apply_root_application" {
       ARGOCD_HOST=$(${local.oc} get route openshift-gitops-server \
         -n openshift-gitops \
         -o jsonpath='{.spec.host}' 2>/dev/null || echo "")
-      if [[ -n "$ARGOCD_HOST" ]]; then
-        echo "  ArgoCD console:  https://$${ARGOCD_HOST}"
+      if [ -n "$ARGOCD_HOST" ]; then
+        echo "  ArgoCD console : https://$${ARGOCD_HOST}"
       else
-        echo "  ArgoCD console:  oc get route openshift-gitops-server -n openshift-gitops -o jsonpath='https://{.spec.host}'"
+        echo "  ArgoCD console : route not yet available — run:"
+        echo "    oc get route openshift-gitops-server -n openshift-gitops -o jsonpath='https://{.spec.host}'"
       fi
       echo ""
       echo "  Next steps:"
