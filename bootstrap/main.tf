@@ -209,7 +209,28 @@ resource "null_resource" "apply_root_application" {
   ]
 
   provisioner "local-exec" {
-    command = "${local.oc} apply -f '${local_file.root_application.filename}'"
+    command = <<-EOT
+      ${local.oc} apply -f '${local_file.root_application.filename}'
+
+      echo ""
+      echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+      echo "  Bootstrap complete"
+      echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+      echo ""
+      ARGOCD_HOST=$(${local.oc} get route openshift-gitops-server \
+        -n openshift-gitops \
+        -o jsonpath='{.spec.host}' 2>/dev/null || echo "")
+      if [[ -n "$ARGOCD_HOST" ]]; then
+        echo "  ArgoCD console:  https://$${ARGOCD_HOST}"
+      else
+        echo "  ArgoCD console:  oc get route openshift-gitops-server -n openshift-gitops -o jsonpath='https://{.spec.host}'"
+      fi
+      echo ""
+      echo "  Next steps:"
+      echo "    1. git add gitops/applicationset.yaml && git commit && git push"
+      echo "    2. Open ArgoCD → sync the 'ai-ml-root' Application"
+      echo ""
+    EOT
   }
 
   triggers = {
