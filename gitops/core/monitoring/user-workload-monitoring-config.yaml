@@ -18,5 +18,3 @@ data:
         limits:
           cpu: "1"
           memory: 2Gi
-    alertmanager:
-      enabled: true
