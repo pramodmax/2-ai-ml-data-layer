@@ -11,7 +11,7 @@
 #   6. Cluster has sufficient node capacity for RHOAI
 #   7. Required namespaces are not in a broken state
 #   8. Existing conflicting installations (GitOps, RHOAI already present)
-#   9. gitops_repo_url is network-reachable (https only)
+#   9. gitops_repo_url is network-reachable (https only; 404 is a warning — private repos)
 #
 # Run manually:  ./scripts/check-cluster-prereqs.sh
 # Called by Terraform null_resource.check_prereqs before any cluster work.
@@ -360,8 +360,9 @@ else
 fi  # kubeconfig exists
 
 # ─── GitOps repository reachability ─────────────────────────────────────────
-# A 404 is a hard failure — ArgoCD cannot sync from a repo that doesn't exist.
-# Network timeouts and auth-gated repos (401/403) are warnings only.
+# GitHub returns 404 for private repos from unauthenticated requests, so 404
+# is a warning rather than a failure. Network errors and auth failures are also
+# warnings — ArgoCD will surface a clear error if the URL is wrong at sync time.
 
 if [[ -n "$GITOPS_URL" ]] && [[ "$GITOPS_URL" == https://* ]]; then
   echo ""
@@ -373,8 +374,9 @@ if [[ -n "$GITOPS_URL" ]] && [[ "$GITOPS_URL" == https://* ]]; then
   if [[ "$HTTP_CODE" == "200" ]] || [[ "$HTTP_CODE" == "301" ]] || [[ "$HTTP_CODE" == "302" ]]; then
     pass "gitops_repo_url is reachable (HTTP ${HTTP_CODE}): ${GITOPS_URL}"
   elif [[ "$HTTP_CODE" == "404" ]]; then
-    fail "gitops_repo_url does not exist (HTTP 404): ${GITOPS_URL}"
-    info "Update gitops_repo_url in terraform.tfvars to point to your fork of this repository"
+    warn "gitops_repo_url returned HTTP 404 — repo may be private (GitHub returns 404 for private repos without auth) or the URL may be wrong"
+    info "If the repo is private, set git_username and git_token in terraform.tfvars"
+    info "If the repo does not exist yet, create it at: ${GITOPS_URL}"
   elif [[ "$HTTP_CODE" == "401" ]] || [[ "$HTTP_CODE" == "403" ]]; then
     warn "gitops_repo_url requires authentication (HTTP ${HTTP_CODE}) — set git_username and git_token in terraform.tfvars if the repo is private"
   elif [[ "$HTTP_CODE" == "000" ]]; then
