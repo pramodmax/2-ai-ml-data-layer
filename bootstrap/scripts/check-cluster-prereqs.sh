@@ -278,10 +278,11 @@ else
         warn "Allocatable worker memory: ~${TOTAL_MEM_KI} GiB — RHOAI recommends >= 64 GiB across workers"
       fi
 
-      # GPU nodes
+      # GPU nodes — use awk (always exits 0) so pipefail never triggers on a
+      # cluster with no GPU nodes where grep would exit 1 on no match.
       GPU_NODES=$(_oc get nodes \
         -o jsonpath='{range .items[*]}{.metadata.name}{" "}{.status.capacity.nvidia\.com/gpu}{"\n"}{end}' 2>/dev/null \
-        | grep -v " $" | grep -v "^$" | wc -l | tr -d ' ')
+        | awk '$2 ~ /^[0-9]+$/ && $2 > 0 { count++ } END { print count+0 }')
       if [[ "$GPU_NODES" -gt 0 ]]; then
         pass "GPU nodes detected: ${GPU_NODES} node(s) with nvidia.com/gpu capacity"
         ENABLE_GPU_VAR=$(get_var "enable_gpu")
@@ -299,7 +300,8 @@ else
               else
                 echo 'enable_gpu = true' >> "$TFVARS_FILE"
               fi
-              pass "enable_gpu = true written to terraform.tfvars — NFD and GPU Operator will be deployed"
+              pass "enable_gpu = true written to terraform.tfvars"
+              info "Re-run 'terraform apply' to apply the GPU flag — it is not active in this run"
             else
               info "Skipped — set 'enable_gpu = true' in terraform.tfvars before running terraform apply"
             fi
