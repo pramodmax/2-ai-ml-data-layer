@@ -160,10 +160,14 @@ resource "kubernetes_cluster_role_binding" "argocd_cluster_admin" {
   }
 }
 
-# ─── Phase 4: Optional — configure private repo credentials ───────────────────
+# ─── Phase 4: Register the GitOps repo with ArgoCD ───────────────────────────
+# ArgoCD reads repository credentials from a Secret labelled
+# argocd.argoproj.io/secret-type=repository. Creating it for all repos
+# (public and private) lets ArgoCD validate connectivity before the root
+# Application is applied and avoids "Repository not found" errors at sync time.
+# For public repos the username/password fields are left empty.
 
 resource "kubernetes_secret" "argocd_repo_creds" {
-  count      = var.git_username != "" ? 1 : 0
   depends_on = [null_resource.wait_gitops]
 
   metadata {

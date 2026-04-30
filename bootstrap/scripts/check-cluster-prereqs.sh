@@ -359,7 +359,9 @@ else
   fi  # OC_OK
 fi  # kubeconfig exists
 
-# ─── (Optional) gitops_repo_url reachability ─────────────────────────────────
+# ─── GitOps repository reachability ─────────────────────────────────────────
+# A 404 is a hard failure — ArgoCD cannot sync from a repo that doesn't exist.
+# Network timeouts and auth-gated repos (401/403) are warnings only.
 
 if [[ -n "$GITOPS_URL" ]] && [[ "$GITOPS_URL" == https://* ]]; then
   echo ""
@@ -369,11 +371,16 @@ if [[ -n "$GITOPS_URL" ]] && [[ "$GITOPS_URL" == https://* ]]; then
     --connect-timeout 8 --max-time 15 \
     "${GITOPS_URL%.git}" 2>/dev/null || echo "000")
   if [[ "$HTTP_CODE" == "200" ]] || [[ "$HTTP_CODE" == "301" ]] || [[ "$HTTP_CODE" == "302" ]]; then
-    pass "gitops_repo_url is reachable (HTTP ${HTTP_CODE})"
+    pass "gitops_repo_url is reachable (HTTP ${HTTP_CODE}): ${GITOPS_URL}"
+  elif [[ "$HTTP_CODE" == "404" ]]; then
+    fail "gitops_repo_url does not exist (HTTP 404): ${GITOPS_URL}"
+    info "Update gitops_repo_url in terraform.tfvars to point to your fork of this repository"
+  elif [[ "$HTTP_CODE" == "401" ]] || [[ "$HTTP_CODE" == "403" ]]; then
+    warn "gitops_repo_url requires authentication (HTTP ${HTTP_CODE}) — set git_username and git_token in terraform.tfvars if the repo is private"
   elif [[ "$HTTP_CODE" == "000" ]]; then
-    warn "gitops_repo_url could not be reached (network timeout) — ensure the cluster can reach ${GITOPS_URL}"
+    warn "gitops_repo_url could not be reached (network timeout) — ensure the machine running Terraform can reach ${GITOPS_URL}"
   else
-    warn "gitops_repo_url returned HTTP ${HTTP_CODE} — verify the repository URL and access permissions"
+    warn "gitops_repo_url returned HTTP ${HTTP_CODE} — verify the URL and repository access"
   fi
 fi
 
