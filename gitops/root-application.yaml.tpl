@@ -16,5 +16,4 @@ spec:
     namespace: openshift-gitops
   syncPolicy:
     syncOptions:
-    - ServerSideApply=true
     - RespectIgnoreDifferences=true
