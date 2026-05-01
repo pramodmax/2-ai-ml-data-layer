@@ -27,19 +27,28 @@ Terraform bootstrap + GitOps manifests for deploying a production-ready AI/ML pl
 │              │                                                      │        │
 │        ┌─────┴──────┐  ┌──────────────────┐  ┌───────────────────┐│        │
 │        │ Namespaces │  │Platform Operators │  │    Monitoring     ││        │
-│        │ (wave -5)  │  │  (waves 0 → 1)   │  │  (waves -5→15)   ││        │
+│        │ AppSet -20 │  │  (waves 0 → 1)   │  │  (waves -5→15)   ││        │
 │        │            │  │                  │  │                   ││        │
 │        │cert-mgr-op │  │ cert-manager     │  │ User Workload     ││        │
 │        │kueue-op    │  │ Kueue + JobSet   │  │ Monitoring        ││        │
 │        │jobset-op   │  │ OCP Pipelines    │  │ (Prometheus)      ││        │
 │        │rhsso       │  │ Red Hat SSO      │  │                   ││        │
-│        │ext-secrets │  │ Ext Secrets Op   │  │ Grafana Operator  ││        │
+│        │vault       │  │ Vault Secrets Op │  │ Grafana Operator  ││        │
 │        │grafana     │  └──────────────────┘  │ (ML dashboards)  ││        │
 │        │rhoai-regs  │                         └───────────────────┘│        │
 │        │data-sci-   │  ┌──────────────────────────────────────────┐│        │
-│        │ project    │  │  Object Storage (wave 5)                 ││        │
-│        └────────────┘  │  RustFS (S3-compatible, in-cluster)      ││        │
-│                        │  s3-credentials → redhat-ods-applications││        │
+│        │ project    │  │  Secret Management + Object Storage      ││        │
+│        └────────────┘  │                                          ││        │
+│                        │  AppSet -10 ▸ HashiCorp Vault            ││        │
+│                        │  StatefulSet · 10Gi PVC · init Job       ││        │
+│                        │  KV-v2 + K8s auth + roles + KV paths     ││        │
+│                        │               ▼                          ││        │
+│                        │  AppSet -5  ▸ Vault Secrets Operator     ││        │
+│                        │  VaultStaticSecret CRs (KV → Secrets)    ││        │
+│                        │               ▼                          ││        │
+│                        │  AppSet 0   ▸ Object Storage             ││        │
+│                        │  RustFS (S3-compat., in-cluster)         ││        │
+│                        │  s3-credentials → redhat-ods-apps        ││        │
 │                        └──────────────────────────────────────────┘│        │
 │                                                                      │        │
 │              └──────────────────────────────────────────────────────┘        │
@@ -104,12 +113,19 @@ Bootstrap flow:
        │
        ▼  git add gitops/applicationset.yaml && git commit && git push
        │
+       ▼  Create vault-bootstrap-creds Secret (before root sync)
+       │  oc create namespace vault
+       │  oc create secret generic vault-bootstrap-creds -n vault \
+       │    --from-literal=RUSTFS_ACCESS_KEY=<access-key> \
+       │    --from-literal=RUSTFS_SECRET_KEY=<secret-key>
+       │
        ▼  ArgoCD UI: sync ai-ml-root  (one manual click)
                          │
               ┌──────────┘  Root applies the ApplicationSet from git
               │             ApplicationSet discovers configured paths
               │             Creates one child Application per directory
-              │             Child Applications auto-sync in wave order
+              │             Child Applications auto-sync in wave order:
+              │             namespaces(-20) → vault(-10) → vso(-5) → rest(0)
               ▼
       All components installed and self-healing
 ```
@@ -149,14 +165,29 @@ Not deployed by default. Set `enable_gpu = true` in `terraform.tfvars` and re-ru
 
 ## Sync Wave Order
 
-ArgoCD applies resources in ascending wave order. This ensures dependencies (namespaces before operators, operators before CRs) are always satisfied.
+There are two levels of wave ordering.
+
+### ApplicationSet level — controls which Application syncs first
+
+The ApplicationSet `sync-wave` annotation on each Application resource determines the order in which ArgoCD creates and syncs the child Applications.
+
+| AppSet Wave | Application | What happens |
+|-------------|-------------|--------------|
+| `-20` | `namespaces` | All namespaces created before anything else deploys |
+| `-10` | `vault` | Vault StatefulSet + Service + Route; PostSync `vault-init` Job initialises Vault, stores unseal keys, enables KV-v2 + K8s auth, populates KV paths |
+| `-5` | `vault-secrets-operator` | VSO operator installed; VaultConnection + VaultAuth CRs are ready |
+| `0` | all others | cert-manager, Kueue, RHOAI, SSO, object-storage, monitoring, etc. |
+
+### Resource level — controls ordering within each Application
+
+Once an Application starts syncing, its resources apply in ascending resource wave order.
 
 | Wave | What is applied |
 |------|----------------|
-| `-5` | All namespaces, user workload monitoring ConfigMaps |
-| `0` | OperatorGroups (RHOAI, cert-manager, kueue, jobset, ext-secrets, grafana) |
-| `1` | Subscriptions — cert-manager, Kueue, JobSet, Pipelines, RHOAI, RH SSO, Ext Secrets, Grafana |
-| `5` | RustFS Deployment, Service, Route; VaultConnection + VaultAuth |
+| `-5` | Namespaces, user workload monitoring ConfigMaps |
+| `0` | OperatorGroups (RHOAI, cert-manager, kueue, grafana); VaultConnection + VaultAuth CRs |
+| `1` | Subscriptions — cert-manager, Kueue, JobSet, Pipelines, RHOAI, RH SSO, Vault Secrets Operator, Grafana |
+| `5` | RustFS Deployment, Service, Route |
 | `6` | VaultStaticSecret CRs — materialise `rustfs-credentials` and `s3-credentials` from Vault |
 | `10` | DSCInitialization (waits for RHOAI operator to be `Succeeded`) |
 | `15` | DataScienceCluster, Keycloak, Grafana instance |
@@ -244,7 +275,7 @@ Terraform will:
 5. Render `gitops/applicationset.yaml` with your repo URL and GPU flag
 6. Apply the root Application (`ai-ml-root`) with **manual sync**
 
-### 5 — Commit the rendered ApplicationSet and trigger the root sync
+### 5 — Commit the rendered ApplicationSet
 
 After `terraform apply` completes, commit the rendered ApplicationSet so ArgoCD can read it:
 
@@ -254,6 +285,22 @@ git add gitops/applicationset.yaml
 git commit -m "chore: add rendered ApplicationSet"
 git push
 ```
+
+### 6 — Create the Vault bootstrap Secret
+
+Before triggering the root sync, create the Secret that Vault's init Job reads to populate credentials. The `vault` namespace must exist first — create it manually since ArgoCD hasn't run yet.
+
+```bash
+oc create namespace vault
+
+oc create secret generic vault-bootstrap-creds -n vault \
+  --from-literal=RUSTFS_ACCESS_KEY=<your-access-key> \
+  --from-literal=RUSTFS_SECRET_KEY=<your-secret-key>
+```
+
+Choose any alphanumeric string for the key/secret (e.g. `rustfsadmin` / `rustfspassword`). These become the RustFS login and the S3 credentials RHOAI uses. **Never commit this Secret to git.**
+
+### 7 — Trigger the root sync
 
 Then open the ArgoCD console and manually sync `ai-ml-root`:
 
@@ -273,7 +320,7 @@ Or via CLI: `argocd app sync ai-ml-root`
 
 The root Application applies the ApplicationSet, which then creates and auto-syncs all component Applications in wave order (~20–40 min).
 
-### 6 — Monitor progress
+### 8 — Monitor progress
 
 ```bash
 # Watch Applications appear and sync
