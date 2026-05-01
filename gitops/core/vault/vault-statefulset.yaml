@@ -26,16 +26,13 @@ spec:
         - containerPort: 8200
           name: api
         env:
-        - name: VAULT_LOCAL_CONFIG
-          valueFrom:
-            configMapKeyRef:
-              name: vault-config
-              key: vault.hcl
         - name: HOME
           value: /tmp
         volumeMounts:
         - name: data
           mountPath: /vault/data
+        - name: config
+          mountPath: /vault/config
         securityContext:
           allowPrivilegeEscalation: false
           capabilities:
@@ -60,6 +57,10 @@ spec:
             memory: 256Mi
           limits:
             memory: 512Mi
+      volumes:
+      - name: config
+        configMap:
+          name: vault-config
   volumeClaimTemplates:
   - metadata:
       name: data
