@@ -21,7 +21,7 @@ spec:
       containers:
       - name: vault
         image: docker.io/hashicorp/vault:1.15
-        args: ["server"]
+        command: ["vault", "server", "-config=/vault/config/vault.hcl"]
         ports:
         - containerPort: 8200
           name: api
