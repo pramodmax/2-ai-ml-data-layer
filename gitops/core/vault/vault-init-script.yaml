@@ -65,10 +65,11 @@ data:
 
     if ! vault auth list | grep -q "^kubernetes/"; then
       vault auth enable kubernetes
+      # Vault 1.9+: omitting token_reviewer_jwt makes Vault use its own SA token,
+      # which has system:auth-delegator bound via vault-rbac.yaml.
       vault write auth/kubernetes/config \
         kubernetes_host="$KUBE_API" \
-        kubernetes_ca_cert="@$CA_CERT" \
-        token_reviewer_jwt="$SA_TOKEN"
+        kubernetes_ca_cert="@$CA_CERT"
       echo "Kubernetes auth enabled."
     fi
 

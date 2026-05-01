@@ -1,5 +1,5 @@
-# VaultConnection is created in each namespace that uses Vault-synced secrets.
-# Update spec.address to your Vault server URL before syncing.
+# VaultConnection points at the in-cluster Vault service.
+# Vault runs with tls_disable = true, so the address must use http://.
 ---
 apiVersion: secrets.hashicorp.com/v1beta1
 kind: VaultConnection
@@ -10,10 +10,7 @@ metadata:
     argocd.argoproj.io/sync-wave: "5"
     argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
 spec:
-  # Replace with your Vault server address.
-  # For in-cluster Vault: https://vault.vault.svc.cluster.local:8200
-  address: https://vault.vault.svc.cluster.local:8200
-  skipTLSVerify: false
+  address: http://vault.vault.svc.cluster.local:8200
 ---
 apiVersion: secrets.hashicorp.com/v1beta1
 kind: VaultConnection
@@ -24,5 +21,4 @@ metadata:
     argocd.argoproj.io/sync-wave: "5"
     argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
 spec:
-  address: https://vault.vault.svc.cluster.local:8200
-  skipTLSVerify: false
+  address: http://vault.vault.svc.cluster.local:8200
