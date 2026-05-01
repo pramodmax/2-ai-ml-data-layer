@@ -124,13 +124,14 @@ Bootstrap flow:
 | **cert-manager** | `openshift-cert-manager-operator` | Required by KServe for TLS certificate management on model-serving endpoints. Also needed by Kueue and distributed inference workloads. Red Hat supported operator (`stable-v1` channel). |
 | **Kueue** | `openshift-kueue-operator` | Batch workload queue management for AI training jobs. Controls resource quotas and job priorities across Ray, PyTorch, and Kubeflow Training workloads. |
 | **JobSet** | `openshift-jobset-operator` | Kubernetes JobSet API — required dependency for Kueue and distributed training jobs (multi-node PyTorch, etc.). |
-| **Object Storage (RustFS)** | `object-storage` | Open-source S3-compatible object store deployed in-cluster. Provides artifact storage for AI Pipelines and MLflow without any cloud dependency. The `s3-credentials` Secret is created in `redhat-ods-applications` pointing to the in-cluster RustFS endpoint. |
+| **Object Storage (RustFS)** | `object-storage` | Open-source S3-compatible object store deployed in-cluster. Credentials are never stored in git — they are synced from HashiCorp Vault via `VaultStaticSecret` CRs. The `s3-credentials` Secret is materialised in `redhat-ods-applications` and picked up by AI Pipelines and MLflow. |
 | **OpenShift Pipelines** (Tekton) | `openshift-operators` | CI/CD and ML pipeline orchestration. RHOAI AI Pipelines (Kubeflow v2) uses this as its execution engine for automated model training, evaluation, and promotion workflows. |
 | **Red Hat OpenShift AI 3.4** | `redhat-ods-operator` | Core AI/ML platform. Provides: Dashboard, Jupyter Workbenches, AI Pipelines (Kubeflow v2), KServe model serving, Ray distributed training, TrustyAI explainability, MLflow tracking, Model Registry, and Kueue batch management. |
 | **Model Registry** | `rhoai-model-registries` | Central repository for registering, versioning, and managing the lifecycle of trained models. Enables model governance, lineage tracking, and sharing across teams before deployment. |
 | **MLflow** | `redhat-ods-applications` | Experiment tracking, metric logging, artifact storage, and model versioning. Integrated into RHOAI 3.4 as Technology Preview via the `mlflowoperator` component. |
 | **Red Hat SSO** (Keycloak) | `rhsso` | Identity and access management. Provides OIDC/OAuth2 for authenticating users into RHOAI workbenches and the OpenShift console. Supports integration with enterprise LDAP/Active Directory. |
-| **External Secrets Operator** | `external-secrets` | Optional. Bridges external secret stores (HashiCorp Vault, AWS Secrets Manager, Azure Key Vault) with Kubernetes Secrets. Not required for object storage — RustFS uses a static in-cluster Secret. |
+| **External Secrets Operator** | `external-secrets` | Optional. Bridges external secret stores (HashiCorp Vault, AWS Secrets Manager, Azure Key Vault) with Kubernetes Secrets. |
+| **Vault Secrets Operator** | `openshift-operators` | Syncs secrets from HashiCorp Vault into Kubernetes Secrets via `VaultStaticSecret` CRs. Used to inject RustFS credentials without storing them in git. Requires a running Vault instance with Kubernetes auth enabled. |
 | **User Workload Monitoring** | `openshift-monitoring` | Extends the built-in OpenShift Prometheus to scrape metrics from AI/ML workloads, model servers, and pipeline runs. Required for RHOAI's model-serving metrics and TrustyAI fairness monitoring. |
 | **Grafana** | `grafana` | Custom dashboards for GPU utilisation, model inference latency, pipeline throughput, and cluster resource consumption. Connects to OpenShift Thanos Querier. |
 | **Data Science Project** | `data-science-project` | Tenant namespace registered in the RHOAI dashboard. Data scientists create notebooks, run pipelines, and deploy models here. RBAC grants access to the `data-scientists` group via RH SSO. |
@@ -155,7 +156,8 @@ ArgoCD applies resources in ascending wave order. This ensures dependencies (nam
 | `-5` | All namespaces, user workload monitoring ConfigMaps |
 | `0` | OperatorGroups (RHOAI, cert-manager, kueue, jobset, ext-secrets, grafana) |
 | `1` | Subscriptions — cert-manager, Kueue, JobSet, Pipelines, RHOAI, RH SSO, Ext Secrets, Grafana |
-| `5` | RustFS Deployment, Service, Route, credentials Secret |
+| `5` | RustFS Deployment, Service, Route; VaultConnection + VaultAuth |
+| `6` | VaultStaticSecret CRs — materialise `rustfs-credentials` and `s3-credentials` from Vault |
 | `10` | DSCInitialization (waits for RHOAI operator to be `Succeeded`) |
 | `15` | DataScienceCluster, Keycloak, Grafana instance |
 | `20` | MLflow CR instance, Data Science Project RoleBindings |
@@ -305,12 +307,13 @@ oc get csv -A --watch
     │   ├── namespaces/               # All namespaces (wave -5)
     │   ├── cert-manager/             # cert-manager operator (waves 0-1)
     │   ├── kueue/                    # Kueue + JobSet operators (waves 0-1)
-    │   ├── object-storage/           # RustFS deployment + s3-credentials Secret (wave 5)
+    │   ├── object-storage/           # RustFS deployment + VaultStaticSecrets (waves 5-6)
     │   ├── openshift-pipelines/      # Tekton operator (wave 1)
     │   ├── rhoai/                    # RHOAI 3.4 operator + DSC + DSCI (waves 1-15)
     │   ├── mlflow/                   # MLflow CR instance (wave 20)
     │   ├── rhsso/                    # Red Hat SSO + Keycloak (waves 1-15)
     │   ├── external-secrets/         # External Secrets Operator (wave 1)
+│   ├── vault-secrets-operator/   # HashiCorp Vault Secrets Operator (wave 1)
     │   ├── monitoring/               # Prometheus config + Grafana (waves -5 to 15)
     │   └── data-science-project/     # Tenant namespace + RBAC (wave 20)
     └── opt/                          # Optional components — enabled via enable_gpu tfvar
@@ -360,37 +363,80 @@ Terraform re-renders the ApplicationSet to also watch `gitops/opt/nfd` and `gito
 
 > The `check-cluster-prereqs.sh` script will warn if it detects GPU-capable nodes but `enable_gpu` is not set to `true`.
 
-### Object storage — RustFS setup
+### Object storage — RustFS + Vault setup
 
-`gitops/core/object-storage/` deploys RustFS, an open-source S3-compatible object store, directly in the cluster. No cloud account or external secret store is required.
+`gitops/core/object-storage/` deploys RustFS (S3-compatible, in-cluster) and uses the **HashiCorp Vault Secrets Operator** to materialise credentials — no secrets are stored in git.
 
-**Default credentials** are set in `gitops/core/object-storage/rustfs-secret.yaml`. Change them before going to production:
+#### 1 — Configure Vault
 
-```yaml
-# gitops/core/object-storage/rustfs-secret.yaml
-stringData:
-  access-key: "your-access-key"
-  secret-key: "your-secret-key"
+Enable the KV-v2 engine and Kubernetes auth, then write the two secrets:
+
+```bash
+# Enable KV-v2 (skip if already enabled)
+vault secrets enable -path=secret kv-v2
+
+# RustFS server credentials
+vault kv put secret/object-storage/rustfs \
+  access-key=<your-access-key> \
+  secret-key=<your-secret-key>
+
+# RHOAI / MLflow S3 credentials (must match the values above)
+vault kv put secret/object-storage/s3-credentials \
+  AWS_ACCESS_KEY_ID=<your-access-key> \
+  AWS_SECRET_ACCESS_KEY=<your-secret-key> \
+  AWS_S3_BUCKET=rhoai-models \
+  AWS_DEFAULT_REGION=us-east-1 \
+  AWS_S3_ENDPOINT=http://rustfs.object-storage.svc.cluster.local:9000 \
+  AWS_S3_ENDPOINT_URL=http://rustfs.object-storage.svc.cluster.local:9000
 ```
 
-Update `gitops/core/object-storage/rhoai-s3-credentials.yaml` with the same values so AI Pipelines and MLflow can authenticate:
+Enable Kubernetes auth and create the two roles:
 
-```yaml
-stringData:
-  AWS_ACCESS_KEY_ID: "your-access-key"
-  AWS_SECRET_ACCESS_KEY: "your-secret-key"
-  AWS_S3_BUCKET: "rhoai-models"
-  AWS_S3_ENDPOINT_URL: "http://rustfs.object-storage.svc.cluster.local:9000"
+```bash
+vault auth enable kubernetes
+vault write auth/kubernetes/config \
+  kubernetes_host="https://$KUBERNETES_PORT_443_TCP_ADDR:443"
+
+# Vault policy granting read on both paths
+vault policy write object-storage-policy - <<EOF
+path "secret/data/object-storage/*" { capabilities = ["read"] }
+EOF
+
+# Role for the object-storage namespace
+vault write auth/kubernetes/role/object-storage \
+  bound_service_account_names=default \
+  bound_service_account_namespaces=object-storage \
+  policies=object-storage-policy ttl=1h
+
+# Role for the RHOAI applications namespace
+vault write auth/kubernetes/role/rhoai \
+  bound_service_account_names=default \
+  bound_service_account_namespaces=redhat-ods-applications \
+  policies=object-storage-policy ttl=1h
 ```
 
-**Create the initial bucket** after RustFS is running (get the Route URL from ArgoCD or `oc`):
+#### 2 — Update the Vault address
+
+Edit `gitops/core/object-storage/vault-connection.yaml` and set `spec.address` to your Vault server URL:
+
+```yaml
+spec:
+  address: https://vault.vault.svc.cluster.local:8200   # in-cluster Vault
+  # address: https://vault.example.com                  # external Vault
+```
+
+#### 3 — Create the initial S3 bucket
+
+After RustFS is running, create the bucket using the Route:
 
 ```bash
 RUSTFS_URL=$(oc get route rustfs -n object-storage -o jsonpath='https://{.spec.host}')
+AWS_ACCESS_KEY_ID=<your-access-key> \
+AWS_SECRET_ACCESS_KEY=<your-secret-key> \
 aws s3 mb s3://rhoai-models --endpoint-url "$RUSTFS_URL"
 ```
 
-The `s3-credentials` Secret is created in `redhat-ods-applications` at sync wave 15 and is automatically picked up by AI Pipelines and MLflow.
+The `s3-credentials` Secret is materialised in `redhat-ods-applications` by the VSO `VaultStaticSecret` CR and is automatically picked up by AI Pipelines and MLflow.
 
 ### Feature Store (Feast)
 Set `feastoperator.managementState: Managed` in `gitops/core/rhoai/data-science-cluster.yaml`.

@@ -1,0 +1,49 @@
+# VaultAuth configures Kubernetes auth for each namespace.
+# Prerequisites in Vault:
+#   vault auth enable kubernetes
+#   vault write auth/kubernetes/config \
+#     kubernetes_host="https://$KUBERNETES_PORT_443_TCP_ADDR:443"
+#   vault write auth/kubernetes/role/object-storage \
+#     bound_service_account_names=default \
+#     bound_service_account_namespaces=object-storage \
+#     policies=object-storage-policy ttl=1h
+#   vault write auth/kubernetes/role/rhoai \
+#     bound_service_account_names=default \
+#     bound_service_account_namespaces=redhat-ods-applications \
+#     policies=object-storage-policy ttl=1h
+---
+apiVersion: secrets.hashicorp.com/v1beta1
+kind: VaultAuth
+metadata:
+  name: vault-auth
+  namespace: object-storage
+  annotations:
+    argocd.argoproj.io/sync-wave: "5"
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+spec:
+  vaultConnectionRef: vault-connection
+  method: kubernetes
+  mount: kubernetes
+  kubernetes:
+    role: object-storage
+    serviceAccount: default
+    audiences:
+    - vault
+---
+apiVersion: secrets.hashicorp.com/v1beta1
+kind: VaultAuth
+metadata:
+  name: vault-auth
+  namespace: redhat-ods-applications
+  annotations:
+    argocd.argoproj.io/sync-wave: "5"
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+spec:
+  vaultConnectionRef: vault-connection
+  method: kubernetes
+  mount: kubernetes
+  kubernetes:
+    role: rhoai
+    serviceAccount: default
+    audiences:
+    - vault

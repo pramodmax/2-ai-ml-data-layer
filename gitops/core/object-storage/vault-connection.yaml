@@ -1,0 +1,28 @@
+# VaultConnection is created in each namespace that uses Vault-synced secrets.
+# Update spec.address to your Vault server URL before syncing.
+---
+apiVersion: secrets.hashicorp.com/v1beta1
+kind: VaultConnection
+metadata:
+  name: vault-connection
+  namespace: object-storage
+  annotations:
+    argocd.argoproj.io/sync-wave: "5"
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+spec:
+  # Replace with your Vault server address.
+  # For in-cluster Vault: https://vault.vault.svc.cluster.local:8200
+  address: https://vault.vault.svc.cluster.local:8200
+  skipTLSVerify: false
+---
+apiVersion: secrets.hashicorp.com/v1beta1
+kind: VaultConnection
+metadata:
+  name: vault-connection
+  namespace: redhat-ods-applications
+  annotations:
+    argocd.argoproj.io/sync-wave: "5"
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+spec:
+  address: https://vault.vault.svc.cluster.local:8200
+  skipTLSVerify: false

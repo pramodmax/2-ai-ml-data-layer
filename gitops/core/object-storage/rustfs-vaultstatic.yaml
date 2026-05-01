@@ -1,0 +1,22 @@
+# Syncs RustFS credentials from Vault KV into the rustfs-credentials Secret.
+# Create the Vault secret before ArgoCD syncs this:
+#   vault kv put secret/object-storage/rustfs \
+#     access-key=<your-access-key> \
+#     secret-key=<your-secret-key>
+apiVersion: secrets.hashicorp.com/v1beta1
+kind: VaultStaticSecret
+metadata:
+  name: rustfs-credentials
+  namespace: object-storage
+  annotations:
+    argocd.argoproj.io/sync-wave: "6"
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+spec:
+  vaultAuthRef: vault-auth
+  mount: secret
+  type: kv-v2
+  path: object-storage/rustfs
+  refreshAfter: 30s
+  destination:
+    name: rustfs-credentials
+    create: true

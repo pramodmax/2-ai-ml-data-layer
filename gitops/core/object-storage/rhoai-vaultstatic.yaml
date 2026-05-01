@@ -1,0 +1,27 @@
+# Syncs S3 credentials from Vault KV into the s3-credentials Secret used by
+# AI Pipelines and MLflow in redhat-ods-applications.
+# Create the Vault secret before ArgoCD syncs this:
+#   vault kv put secret/object-storage/s3-credentials \
+#     AWS_ACCESS_KEY_ID=<your-access-key> \
+#     AWS_SECRET_ACCESS_KEY=<your-secret-key> \
+#     AWS_S3_BUCKET=rhoai-models \
+#     AWS_DEFAULT_REGION=us-east-1 \
+#     AWS_S3_ENDPOINT=http://rustfs.object-storage.svc.cluster.local:9000 \
+#     AWS_S3_ENDPOINT_URL=http://rustfs.object-storage.svc.cluster.local:9000
+apiVersion: secrets.hashicorp.com/v1beta1
+kind: VaultStaticSecret
+metadata:
+  name: s3-credentials
+  namespace: redhat-ods-applications
+  annotations:
+    argocd.argoproj.io/sync-wave: "6"
+    argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
+spec:
+  vaultAuthRef: vault-auth
+  mount: secret
+  type: kv-v2
+  path: object-storage/s3-credentials
+  refreshAfter: 30s
+  destination:
+    name: s3-credentials
+    create: true
