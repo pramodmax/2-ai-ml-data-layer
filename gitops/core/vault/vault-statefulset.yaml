@@ -18,7 +18,6 @@ spec:
     spec:
       securityContext:
         runAsNonRoot: true
-        fsGroup: 1000
       containers:
       - name: vault
         image: docker.io/hashicorp/vault:1.15
