@@ -1,0 +1,16 @@
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: rustfs
+  namespace: object-storage
+  annotations:
+    argocd.argoproj.io/sync-wave: "5"
+spec:
+  to:
+    kind: Service
+    name: rustfs
+  port:
+    targetPort: s3-api
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect

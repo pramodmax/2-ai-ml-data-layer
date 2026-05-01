@@ -7,9 +7,8 @@ metadata:
     argocd.argoproj.io/sync-wave: "20"
     argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
 spec:
-  # Persistent storage for the SQLite backend and artifact store.
-  # For production: replace backendStoreUri with a PostgreSQL or MySQL URI
-  # and replace artifactsDestination with an S3/OBC URI.
+  # SQLite backend for run metadata. For production replace with PostgreSQL:
+  #   backendStoreUri: "postgresql://user:pass@host:5432/mlflow"
   storage:
     accessModes:
     - ReadWriteOnce
@@ -17,7 +16,9 @@ spec:
       requests:
         storage: 20Gi
   backendStoreUri: "sqlite:////mlflow/mlflow.db"
-  artifactsDestination: "file:///mlflow/artifacts"
+  # Artifacts stored in RustFS (S3-compatible). The s3-credentials Secret in
+  # redhat-ods-applications supplies AWS_S3_ENDPOINT_URL, access key, and bucket.
+  artifactsDestination: "s3://rhoai-models/mlflow"
   serveArtifacts: true
   image:
     imagePullPolicy: Always

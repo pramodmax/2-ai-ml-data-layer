@@ -38,7 +38,7 @@ Terraform bootstrap + GitOps manifests for deploying a production-ready AI/ML pl
 │        │rhoai-regs  │                         └───────────────────┘│        │
 │        │data-sci-   │  ┌──────────────────────────────────────────┐│        │
 │        │ project    │  │  Object Storage (wave 5)                 ││        │
-│        └────────────┘  │  AWS S3 via External Secrets Operator    ││        │
+│        └────────────┘  │  RustFS (S3-compatible, in-cluster)      ││        │
 │                        │  s3-credentials → redhat-ods-applications││        │
 │                        └──────────────────────────────────────────┘│        │
 │                                                                      │        │
@@ -124,13 +124,13 @@ Bootstrap flow:
 | **cert-manager** | `openshift-cert-manager-operator` | Required by KServe for TLS certificate management on model-serving endpoints. Also needed by Kueue and distributed inference workloads. Red Hat supported operator (`stable-v1` channel). |
 | **Kueue** | `openshift-kueue-operator` | Batch workload queue management for AI training jobs. Controls resource quotas and job priorities across Ray, PyTorch, and Kubeflow Training workloads. |
 | **JobSet** | `openshift-jobset-operator` | Kubernetes JobSet API — required dependency for Kueue and distributed training jobs (multi-node PyTorch, etc.). |
-| **Object Storage (S3)** | `redhat-ods-applications` | S3 credentials injected via External Secrets Operator from AWS Secrets Manager. Required by AI Pipelines for artifact storage and by MLflow for experiment artifacts. Uses native AWS S3 — no in-cluster object store operator needed on AWS IPI. |
+| **Object Storage (RustFS)** | `object-storage` | Open-source S3-compatible object store deployed in-cluster. Provides artifact storage for AI Pipelines and MLflow without any cloud dependency. The `s3-credentials` Secret is created in `redhat-ods-applications` pointing to the in-cluster RustFS endpoint. |
 | **OpenShift Pipelines** (Tekton) | `openshift-operators` | CI/CD and ML pipeline orchestration. RHOAI AI Pipelines (Kubeflow v2) uses this as its execution engine for automated model training, evaluation, and promotion workflows. |
 | **Red Hat OpenShift AI 3.4** | `redhat-ods-operator` | Core AI/ML platform. Provides: Dashboard, Jupyter Workbenches, AI Pipelines (Kubeflow v2), KServe model serving, Ray distributed training, TrustyAI explainability, MLflow tracking, Model Registry, and Kueue batch management. |
 | **Model Registry** | `rhoai-model-registries` | Central repository for registering, versioning, and managing the lifecycle of trained models. Enables model governance, lineage tracking, and sharing across teams before deployment. |
 | **MLflow** | `redhat-ods-applications` | Experiment tracking, metric logging, artifact storage, and model versioning. Integrated into RHOAI 3.4 as Technology Preview via the `mlflowoperator` component. |
 | **Red Hat SSO** (Keycloak) | `rhsso` | Identity and access management. Provides OIDC/OAuth2 for authenticating users into RHOAI workbenches and the OpenShift console. Supports integration with enterprise LDAP/Active Directory. |
-| **External Secrets Operator** | `external-secrets` | Bridges external secret stores (AWS Secrets Manager, HashiCorp Vault, Azure Key Vault) with Kubernetes Secrets. Keeps credentials out of git. |
+| **External Secrets Operator** | `external-secrets` | Optional. Bridges external secret stores (HashiCorp Vault, AWS Secrets Manager, Azure Key Vault) with Kubernetes Secrets. Not required for object storage — RustFS uses a static in-cluster Secret. |
 | **User Workload Monitoring** | `openshift-monitoring` | Extends the built-in OpenShift Prometheus to scrape metrics from AI/ML workloads, model servers, and pipeline runs. Required for RHOAI's model-serving metrics and TrustyAI fairness monitoring. |
 | **Grafana** | `grafana` | Custom dashboards for GPU utilisation, model inference latency, pipeline throughput, and cluster resource consumption. Connects to OpenShift Thanos Querier. |
 | **Data Science Project** | `data-science-project` | Tenant namespace registered in the RHOAI dashboard. Data scientists create notebooks, run pipelines, and deploy models here. RBAC grants access to the `data-scientists` group via RH SSO. |
@@ -155,7 +155,7 @@ ArgoCD applies resources in ascending wave order. This ensures dependencies (nam
 | `-5` | All namespaces, user workload monitoring ConfigMaps |
 | `0` | OperatorGroups (RHOAI, cert-manager, kueue, jobset, ext-secrets, grafana) |
 | `1` | Subscriptions — cert-manager, Kueue, JobSet, Pipelines, RHOAI, RH SSO, Ext Secrets, Grafana |
-| `5` | ClusterSecretStore (ESO → AWS Secrets Manager), S3 ExternalSecret |
+| `5` | RustFS Deployment, Service, Route, credentials Secret |
 | `10` | DSCInitialization (waits for RHOAI operator to be `Succeeded`) |
 | `15` | DataScienceCluster, Keycloak, Grafana instance |
 | `20` | MLflow CR instance, Data Science Project RoleBindings |
@@ -305,7 +305,7 @@ oc get csv -A --watch
     │   ├── namespaces/               # All namespaces (wave -5)
     │   ├── cert-manager/             # cert-manager operator (waves 0-1)
     │   ├── kueue/                    # Kueue + JobSet operators (waves 0-1)
-    │   ├── object-storage/           # AWS S3 ClusterSecretStore + ExternalSecret (wave 5)
+    │   ├── object-storage/           # RustFS deployment + s3-credentials Secret (wave 5)
     │   ├── openshift-pipelines/      # Tekton operator (wave 1)
     │   ├── rhoai/                    # RHOAI 3.4 operator + DSC + DSCI (waves 1-15)
     │   ├── mlflow/                   # MLflow CR instance (wave 20)
@@ -360,31 +360,37 @@ Terraform re-renders the ApplicationSet to also watch `gitops/opt/nfd` and `gito
 
 > The `check-cluster-prereqs.sh` script will warn if it detects GPU-capable nodes but `enable_gpu` is not set to `true`.
 
-### S3 object storage — pre-requisite setup
+### Object storage — RustFS setup
 
-`gitops/core/object-storage/` is auto-deployed and configures AWS S3 access. Before ArgoCD syncs it you must:
+`gitops/core/object-storage/` deploys RustFS, an open-source S3-compatible object store, directly in the cluster. No cloud account or external secret store is required.
 
-1. **Create an S3 bucket** in AWS (same region as your cluster):
-   ```bash
-   aws s3 mb s3://my-ocp-ai-artifacts --region us-east-1
-   ```
+**Default credentials** are set in `gitops/core/object-storage/rustfs-secret.yaml`. Change them before going to production:
 
-2. **Store credentials in AWS Secrets Manager:**
-   ```bash
-   aws secretsmanager create-secret \
-     --name "ocp-ai/s3-credentials" \
-     --region us-east-1 \
-     --secret-string '{
-       "accessKeyId":     "AKIA...",
-       "secretAccessKey": "...",
-       "bucketName":      "my-ocp-ai-artifacts",
-       "region":          "us-east-1"
-     }'
-   ```
+```yaml
+# gitops/core/object-storage/rustfs-secret.yaml
+stringData:
+  access-key: "your-access-key"
+  secret-key: "your-secret-key"
+```
 
-3. **Update the region** in `gitops/core/object-storage/cluster-secret-store.yaml` if your cluster is not in `us-east-1`.
+Update `gitops/core/object-storage/rhoai-s3-credentials.yaml` with the same values so AI Pipelines and MLflow can authenticate:
 
-The `s3-credentials` Kubernetes Secret is then created in `redhat-ods-applications` and referenced by AI Pipelines and MLflow.
+```yaml
+stringData:
+  AWS_ACCESS_KEY_ID: "your-access-key"
+  AWS_SECRET_ACCESS_KEY: "your-secret-key"
+  AWS_S3_BUCKET: "rhoai-models"
+  AWS_S3_ENDPOINT_URL: "http://rustfs.object-storage.svc.cluster.local:9000"
+```
+
+**Create the initial bucket** after RustFS is running (get the Route URL from ArgoCD or `oc`):
+
+```bash
+RUSTFS_URL=$(oc get route rustfs -n object-storage -o jsonpath='https://{.spec.host}')
+aws s3 mb s3://rhoai-models --endpoint-url "$RUSTFS_URL"
+```
+
+The `s3-credentials` Secret is created in `redhat-ods-applications` at sync wave 15 and is automatically picked up by AI Pipelines and MLflow.
 
 ### Feature Store (Feast)
 Set `feastoperator.managementState: Managed` in `gitops/core/rhoai/data-science-cluster.yaml`.
