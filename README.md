@@ -130,8 +130,8 @@ Bootstrap flow:
 | **Model Registry** | `rhoai-model-registries` | Central repository for registering, versioning, and managing the lifecycle of trained models. Enables model governance, lineage tracking, and sharing across teams before deployment. |
 | **MLflow** | `redhat-ods-applications` | Experiment tracking, metric logging, artifact storage, and model versioning. Integrated into RHOAI 3.4 as Technology Preview via the `mlflowoperator` component. |
 | **Red Hat SSO** (Keycloak) | `rhsso` | Identity and access management. Provides OIDC/OAuth2 for authenticating users into RHOAI workbenches and the OpenShift console. Supports integration with enterprise LDAP/Active Directory. |
-| **External Secrets Operator** | `external-secrets` | Optional. Bridges external secret stores (HashiCorp Vault, AWS Secrets Manager, Azure Key Vault) with Kubernetes Secrets. |
-| **Vault Secrets Operator** | `openshift-operators` | Syncs secrets from HashiCorp Vault into Kubernetes Secrets via `VaultStaticSecret` CRs. Used to inject RustFS credentials without storing them in git. Requires a running Vault instance with Kubernetes auth enabled. |
+| **HashiCorp Vault** | `vault` | Self-hosted secret store. Deployed first (ApplicationSet wave -10) so credential KV paths are available before dependent components start. A PostSync Job initialises Vault, stores unseal keys in a K8s Secret, and populates `secret/object-storage/*` from a bootstrap Secret the operator creates once (never in git). |
+| **Vault Secrets Operator** | `openshift-operators` | Syncs secrets from HashiCorp Vault into Kubernetes Secrets via `VaultStaticSecret` CRs. Deployed at wave -5, after Vault is up. Used to inject RustFS credentials without storing them in git. |
 | **User Workload Monitoring** | `openshift-monitoring` | Extends the built-in OpenShift Prometheus to scrape metrics from AI/ML workloads, model servers, and pipeline runs. Required for RHOAI's model-serving metrics and TrustyAI fairness monitoring. |
 | **Grafana** | `grafana` | Custom dashboards for GPU utilisation, model inference latency, pipeline throughput, and cluster resource consumption. Connects to OpenShift Thanos Querier. |
 | **Data Science Project** | `data-science-project` | Tenant namespace registered in the RHOAI dashboard. Data scientists create notebooks, run pipelines, and deploy models here. RBAC grants access to the `data-scientists` group via RH SSO. |
@@ -312,8 +312,8 @@ oc get csv -A --watch
     │   ├── rhoai/                    # RHOAI 3.4 operator + DSC + DSCI (waves 1-15)
     │   ├── mlflow/                   # MLflow CR instance (wave 20)
     │   ├── rhsso/                    # Red Hat SSO + Keycloak (waves 1-15)
-    │   ├── external-secrets/         # External Secrets Operator (wave 1)
-│   ├── vault-secrets-operator/   # HashiCorp Vault Secrets Operator (wave 1)
+    │   ├── vault/                    # HashiCorp Vault (ApplicationSet wave -10)
+    │   ├── vault-secrets-operator/   # Vault Secrets Operator (ApplicationSet wave -5)
     │   ├── monitoring/               # Prometheus config + Grafana (waves -5 to 15)
     │   └── data-science-project/     # Tenant namespace + RBAC (wave 20)
     └── opt/                          # Optional components — enabled via enable_gpu tfvar
@@ -365,67 +365,28 @@ Terraform re-renders the ApplicationSet to also watch `gitops/opt/nfd` and `gito
 
 ### Object storage — RustFS + Vault setup
 
-`gitops/core/object-storage/` deploys RustFS (S3-compatible, in-cluster) and uses the **HashiCorp Vault Secrets Operator** to materialise credentials — no secrets are stored in git.
+`gitops/core/vault/` deploys a single-node HashiCorp Vault and a PostSync Job that automatically initialises it. `gitops/core/object-storage/` then deploys RustFS and uses the **Vault Secrets Operator** to materialise credentials — no secrets are stored in git.
 
-#### 1 — Configure Vault
+#### 1 — Create the bootstrap Secret (once, before first sync)
 
-Enable the KV-v2 engine and Kubernetes auth, then write the two secrets:
-
-```bash
-# Enable KV-v2 (skip if already enabled)
-vault secrets enable -path=secret kv-v2
-
-# RustFS server credentials
-vault kv put secret/object-storage/rustfs \
-  access-key=<your-access-key> \
-  secret-key=<your-secret-key>
-
-# RHOAI / MLflow S3 credentials (must match the values above)
-vault kv put secret/object-storage/s3-credentials \
-  AWS_ACCESS_KEY_ID=<your-access-key> \
-  AWS_SECRET_ACCESS_KEY=<your-secret-key> \
-  AWS_S3_BUCKET=rhoai-models \
-  AWS_DEFAULT_REGION=us-east-1 \
-  AWS_S3_ENDPOINT=http://rustfs.object-storage.svc.cluster.local:9000 \
-  AWS_S3_ENDPOINT_URL=http://rustfs.object-storage.svc.cluster.local:9000
-```
-
-Enable Kubernetes auth and create the two roles:
+This Secret provides the credentials the init Job writes into Vault KV. Create it manually in the `vault` namespace before ArgoCD syncs the vault Application. It is never committed to git.
 
 ```bash
-vault auth enable kubernetes
-vault write auth/kubernetes/config \
-  kubernetes_host="https://$KUBERNETES_PORT_443_TCP_ADDR:443"
-
-# Vault policy granting read on both paths
-vault policy write object-storage-policy - <<EOF
-path "secret/data/object-storage/*" { capabilities = ["read"] }
-EOF
-
-# Role for the object-storage namespace
-vault write auth/kubernetes/role/object-storage \
-  bound_service_account_names=default \
-  bound_service_account_namespaces=object-storage \
-  policies=object-storage-policy ttl=1h
-
-# Role for the RHOAI applications namespace
-vault write auth/kubernetes/role/rhoai \
-  bound_service_account_names=default \
-  bound_service_account_namespaces=redhat-ods-applications \
-  policies=object-storage-policy ttl=1h
+kubectl create secret generic vault-bootstrap-creds -n vault \
+  --from-literal=RUSTFS_ACCESS_KEY=<your-access-key> \
+  --from-literal=RUSTFS_SECRET_KEY=<your-secret-key> \
+  --from-literal=AWS_ACCESS_KEY_ID=<your-access-key> \
+  --from-literal=AWS_SECRET_ACCESS_KEY=<your-secret-key>
 ```
 
-#### 2 — Update the Vault address
+The init Job (`vault-init` PostSync hook) then:
+1. Initialises Vault and stores unseal keys in a `vault-unseal-keys` Secret in the `vault` namespace
+2. Unseals Vault
+3. Enables KV-v2 at `secret/`
+4. Enables Kubernetes auth and creates roles for `object-storage` and `redhat-ods-applications` namespaces
+5. Populates `secret/object-storage/rustfs` and `secret/object-storage/s3-credentials` from the bootstrap Secret
 
-Edit `gitops/core/object-storage/vault-connection.yaml` and set `spec.address` to your Vault server URL:
-
-```yaml
-spec:
-  address: https://vault.vault.svc.cluster.local:8200   # in-cluster Vault
-  # address: https://vault.example.com                  # external Vault
-```
-
-#### 3 — Create the initial S3 bucket
+#### 2 — Create the initial S3 bucket
 
 After RustFS is running, create the bucket using the Route:
 

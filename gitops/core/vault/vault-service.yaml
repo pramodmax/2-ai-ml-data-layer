@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: vault
+  namespace: vault
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+spec:
+  # publishNotReadyAddresses allows the init job to reach vault even while sealed
+  publishNotReadyAddresses: true
+  selector:
+    app: vault
+  ports:
+  - port: 8200
+    targetPort: api
+    name: api

@@ -1,0 +1,106 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: vault-init-script
+  namespace: vault
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+data:
+  init.sh: |
+    #!/bin/sh
+    set -e
+
+    VAULT_ADDR="http://vault.vault.svc.cluster.local:8200"
+    export VAULT_ADDR
+
+    KUBE_API="https://kubernetes.default.svc"
+    SA_TOKEN=$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)
+    CA_CERT="/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
+    NAMESPACE=$(cat /var/run/secrets/kubernetes.io/serviceaccount/namespace)
+
+    echo "Waiting for Vault API..."
+    until curl -sf "$VAULT_ADDR/v1/sys/init" > /dev/null 2>&1; do
+      sleep 5
+    done
+    echo "Vault is responding."
+
+    INITIALIZED=$(curl -s "$VAULT_ADDR/v1/sys/init" | grep -o '"initialized":[a-z]*' | cut -d: -f2)
+
+    if [ "$INITIALIZED" = "false" ]; then
+      echo "Initializing Vault..."
+      vault operator init -key-shares=1 -key-threshold=1 > /tmp/init.txt
+      UNSEAL_KEY=$(grep "Unseal Key 1:" /tmp/init.txt | awk '{print $NF}')
+      ROOT_TOKEN=$(grep "Initial Root Token:" /tmp/init.txt | awk '{print $NF}')
+
+      UK_B64=$(printf '%s' "$UNSEAL_KEY" | base64 | tr -d '\n')
+      RT_B64=$(printf '%s' "$ROOT_TOKEN" | base64 | tr -d '\n')
+
+      curl -sf --cacert "$CA_CERT" \
+        -H "Authorization: Bearer $SA_TOKEN" \
+        -H "Content-Type: application/json" \
+        -X POST "$KUBE_API/api/v1/namespaces/$NAMESPACE/secrets" \
+        -d "{\"apiVersion\":\"v1\",\"kind\":\"Secret\",\"metadata\":{\"name\":\"vault-unseal-keys\"},\"type\":\"Opaque\",\"data\":{\"unseal-key\":\"$UK_B64\",\"root-token\":\"$RT_B64\"}}"
+      echo "Unseal keys stored in vault-unseal-keys Secret."
+    else
+      echo "Vault already initialized. Reading unseal keys from vault-unseal-keys Secret..."
+      SECRET=$(curl -sf --cacert "$CA_CERT" \
+        -H "Authorization: Bearer $SA_TOKEN" \
+        "$KUBE_API/api/v1/namespaces/$NAMESPACE/secrets/vault-unseal-keys")
+      UNSEAL_KEY=$(echo "$SECRET" | grep -o '"unseal-key":"[^"]*"' | cut -d'"' -f4 | base64 -d)
+      ROOT_TOKEN=$(echo "$SECRET" | grep -o '"root-token":"[^"]*"' | cut -d'"' -f4 | base64 -d)
+    fi
+
+    SEALED=$(curl -s "$VAULT_ADDR/v1/sys/health" | grep -o '"sealed":[a-z]*' | cut -d: -f2)
+    if [ "$SEALED" = "true" ]; then
+      echo "Unsealing Vault..."
+      vault operator unseal "$UNSEAL_KEY"
+    fi
+
+    vault login "$ROOT_TOKEN"
+
+    if ! vault secrets list | grep -q "^secret/"; then
+      vault secrets enable -path=secret kv-v2
+      echo "KV-v2 enabled at path: secret"
+    fi
+
+    if ! vault auth list | grep -q "^kubernetes/"; then
+      vault auth enable kubernetes
+      vault write auth/kubernetes/config \
+        kubernetes_host="$KUBE_API" \
+        kubernetes_ca_cert="@$CA_CERT" \
+        token_reviewer_jwt="$SA_TOKEN"
+      echo "Kubernetes auth enabled."
+    fi
+
+    cat > /tmp/policy.hcl << 'POLICY'
+    path "secret/data/object-storage/*" {
+      capabilities = ["read", "list"]
+    }
+    POLICY
+    vault policy write object-storage-policy /tmp/policy.hcl
+
+    vault write auth/kubernetes/role/object-storage \
+      bound_service_account_names=default \
+      bound_service_account_namespaces=object-storage \
+      policies=object-storage-policy \
+      ttl=1h
+
+    vault write auth/kubernetes/role/rhoai \
+      bound_service_account_names=default \
+      bound_service_account_namespaces=redhat-ods-applications \
+      policies=object-storage-policy \
+      ttl=1h
+
+    vault kv put secret/object-storage/rustfs \
+      access-key="$RUSTFS_ACCESS_KEY" \
+      secret-key="$RUSTFS_SECRET_KEY"
+
+    vault kv put secret/object-storage/s3-credentials \
+      AWS_ACCESS_KEY_ID="$AWS_ACCESS_KEY_ID" \
+      AWS_SECRET_ACCESS_KEY="$AWS_SECRET_ACCESS_KEY" \
+      AWS_S3_BUCKET="${AWS_S3_BUCKET:-rhoai-models}" \
+      AWS_DEFAULT_REGION="${AWS_DEFAULT_REGION:-us-east-1}" \
+      AWS_S3_ENDPOINT="${AWS_S3_ENDPOINT:-http://rustfs.object-storage.svc.cluster.local:9000}" \
+      AWS_S3_ENDPOINT_URL="${AWS_S3_ENDPOINT_URL:-http://rustfs.object-storage.svc.cluster.local:9000}"
+
+    echo "Vault bootstrap complete."

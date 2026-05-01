@@ -4,6 +4,7 @@ metadata:
   name: ai-ml-data-layer
   namespace: openshift-gitops
 spec:
+  goTemplate: true
   generators:
   - git:
       repoURL: ${gitops_repo_url}
@@ -16,16 +17,17 @@ spec:
 %{ endif ~}
   template:
     metadata:
-      name: "{{path.basename}}"
+      name: '{{.path.basename}}'
       namespace: openshift-gitops
       annotations:
         argocd.argoproj.io/managed-by: openshift-gitops
+        argocd.argoproj.io/sync-wave: '{{ if eq .path.basename "namespaces" }}-20{{ else if eq .path.basename "vault" }}-10{{ else if eq .path.basename "vault-secrets-operator" }}-5{{ else }}0{{ end }}'
     spec:
       project: default
       source:
         repoURL: ${gitops_repo_url}
         targetRevision: ${gitops_repo_revision}
-        path: "{{path}}"
+        path: '{{.path.path}}'
       destination:
         server: https://kubernetes.default.svc
         namespace: openshift-gitops

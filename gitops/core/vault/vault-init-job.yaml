@@ -1,0 +1,47 @@
+# Runs after each ArgoCD sync to initialize Vault, unseal it, and populate KV paths.
+# Prerequisite: create this Secret manually before the first sync (never commit to git):
+#   kubectl create secret generic vault-bootstrap-creds -n vault \
+#     --from-literal=RUSTFS_ACCESS_KEY=<key> \
+#     --from-literal=RUSTFS_SECRET_KEY=<secret> \
+#     --from-literal=AWS_ACCESS_KEY_ID=<key> \
+#     --from-literal=AWS_SECRET_ACCESS_KEY=<secret>
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: vault-init
+  namespace: vault
+  annotations:
+    argocd.argoproj.io/hook: PostSync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+spec:
+  backoffLimit: 5
+  template:
+    spec:
+      serviceAccountName: vault-init
+      restartPolicy: OnFailure
+      securityContext:
+        runAsNonRoot: true
+      volumes:
+      - name: script
+        configMap:
+          name: vault-init-script
+          defaultMode: 0755
+      containers:
+      - name: vault-init
+        image: docker.io/hashicorp/vault:1.15
+        command: ["/scripts/init.sh"]
+        securityContext:
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop: [ALL]
+        volumeMounts:
+        - name: script
+          mountPath: /scripts
+        envFrom:
+        - secretRef:
+            name: vault-bootstrap-creds
+        env:
+        - name: VAULT_SKIP_VERIFY
+          value: "true"
+        - name: HOME
+          value: /tmp
