@@ -1,6 +1,3 @@
-# Red Hat certified External Secrets Operator from certified-operators catalog.
-# Allows workloads to pull secrets from AWS Secrets Manager, HashiCorp Vault,
-# Azure Key Vault, GCP Secret Manager, and others into Kubernetes Secrets.
 apiVersion: operators.coreos.com/v1alpha1
 kind: Subscription
 metadata:
@@ -9,8 +6,8 @@ metadata:
   annotations:
     argocd.argoproj.io/sync-wave: "1"
 spec:
-  channel: stable
+  channel: alpha
   installPlanApproval: Automatic
   name: external-secrets-operator
-  source: certified-operators
+  source: community-operators
   sourceNamespace: openshift-marketplace
