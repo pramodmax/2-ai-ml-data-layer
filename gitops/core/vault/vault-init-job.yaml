@@ -1,10 +1,9 @@
 # Runs after each ArgoCD sync to initialize Vault, unseal it, and populate KV paths.
 # Prerequisite: create this Secret manually before the first sync (never commit to git):
 #   kubectl create secret generic vault-bootstrap-creds -n vault \
-#     --from-literal=RUSTFS_ACCESS_KEY=<key> \
-#     --from-literal=RUSTFS_SECRET_KEY=<secret> \
-#     --from-literal=AWS_ACCESS_KEY_ID=<key> \
-#     --from-literal=AWS_SECRET_ACCESS_KEY=<secret>
+#     --from-literal=RUSTFS_ACCESS_KEY=<your-access-key> \
+#     --from-literal=RUSTFS_SECRET_KEY=<your-secret-key>
+# The same key pair is used for both RustFS server auth and the RHOAI s3-credentials path.
 apiVersion: batch/v1
 kind: Job
 metadata:

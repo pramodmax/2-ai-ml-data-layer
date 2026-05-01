@@ -367,37 +367,65 @@ Terraform re-renders the ApplicationSet to also watch `gitops/opt/nfd` and `gito
 
 `gitops/core/vault/` deploys a single-node HashiCorp Vault and a PostSync Job that automatically initialises it. `gitops/core/object-storage/` then deploys RustFS and uses the **Vault Secrets Operator** to materialise credentials — no secrets are stored in git.
 
-#### 1 — Create the bootstrap Secret (once, before first sync)
+The same RustFS key pair is used for both paths:
+- `secret/object-storage/rustfs` — used by the RustFS server pod
+- `secret/object-storage/s3-credentials` — used by RHOAI AI Pipelines and MLflow to connect to RustFS as an S3 endpoint
 
-This Secret provides the credentials the init Job writes into Vault KV. Create it manually in the `vault` namespace before ArgoCD syncs the vault Application. It is never committed to git.
+#### Step 1 — Create the vault namespace (if not yet created by ArgoCD)
 
 ```bash
-kubectl create secret generic vault-bootstrap-creds -n vault \
-  --from-literal=RUSTFS_ACCESS_KEY=<your-access-key> \
-  --from-literal=RUSTFS_SECRET_KEY=<your-secret-key> \
-  --from-literal=AWS_ACCESS_KEY_ID=<your-access-key> \
-  --from-literal=AWS_SECRET_ACCESS_KEY=<your-secret-key>
+oc create namespace vault
 ```
 
-The init Job (`vault-init` PostSync hook) then:
-1. Initialises Vault and stores unseal keys in a `vault-unseal-keys` Secret in the `vault` namespace
-2. Unseals Vault
-3. Enables KV-v2 at `secret/`
-4. Enables Kubernetes auth and creates roles for `object-storage` and `redhat-ods-applications` namespaces
-5. Populates `secret/object-storage/rustfs` and `secret/object-storage/s3-credentials` from the bootstrap Secret
+#### Step 2 — Create the bootstrap Secret
 
-#### 2 — Create the initial S3 bucket
-
-After RustFS is running, create the bucket using the Route:
+This is the only secret you ever touch manually. It provides the RustFS credentials the init Job writes into Vault KV. Never commit this to git.
 
 ```bash
+oc create secret generic vault-bootstrap-creds -n vault \
+  --from-literal=RUSTFS_ACCESS_KEY=<your-access-key> \
+  --from-literal=RUSTFS_SECRET_KEY=<your-secret-key>
+```
+
+Choose any alphanumeric string for the key and secret (e.g. `rustfsadmin` / `rustfspassword`). These become the login for the RustFS console and the S3 credentials RHOAI uses.
+
+#### Step 3 — Push to git and let ArgoCD sync
+
+ArgoCD syncs in this order (enforced by ApplicationSet sync waves):
+
+| Wave | Application | What happens |
+|------|-------------|--------------|
+| -20 | `namespaces` | Creates the `vault`, `object-storage`, `redhat-ods-applications` namespaces |
+| -10 | `vault` | Deploys Vault StatefulSet; PostSync `vault-init` Job runs automatically |
+| -5 | `vault-secrets-operator` | Installs the VSO operator |
+| 0 | `object-storage` | Deploys RustFS; `VaultStaticSecret` CRs materialise credentials from Vault |
+| 0 | everything else | RHOAI, MLflow, RHSSO, monitoring, etc. |
+
+The `vault-init` Job (PostSync hook) does the following automatically on each sync:
+1. Waits for the Vault API to respond
+2. Initialises Vault on first run; on subsequent runs reads the existing unseal key
+3. Stores unseal key + root token in `vault-unseal-keys` Secret in the `vault` namespace
+4. Unseals Vault if sealed
+5. Enables KV-v2 at `secret/`
+6. Enables Kubernetes auth; creates `object-storage` and `rhoai` roles
+7. Writes `secret/object-storage/rustfs` and `secret/object-storage/s3-credentials` from the bootstrap Secret
+
+#### Step 4 — Create the S3 bucket in RustFS
+
+After RustFS is running (object-storage Application synced), create the bucket ArgoCD does not create it for you:
+
+```bash
+# Get the RustFS route URL
 RUSTFS_URL=$(oc get route rustfs -n object-storage -o jsonpath='https://{.spec.host}')
-AWS_ACCESS_KEY_ID=<your-access-key> \
-AWS_SECRET_ACCESS_KEY=<your-secret-key> \
+
+# Read the access key you set in Step 2
+export AWS_ACCESS_KEY_ID=<your-access-key>
+export AWS_SECRET_ACCESS_KEY=<your-secret-key>
+
 aws s3 mb s3://rhoai-models --endpoint-url "$RUSTFS_URL"
 ```
 
-The `s3-credentials` Secret is materialised in `redhat-ods-applications` by the VSO `VaultStaticSecret` CR and is automatically picked up by AI Pipelines and MLflow.
+The `s3-credentials` Secret is then live in `redhat-ods-applications` and automatically picked up by AI Pipelines and MLflow.
 
 ### Feature Store (Feast)
 Set `feastoperator.managementState: Managed` in `gitops/core/rhoai/data-science-cluster.yaml`.
