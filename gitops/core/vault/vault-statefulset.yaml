@@ -45,7 +45,10 @@ spec:
           failureThreshold: 5
         readinessProbe:
           httpGet:
-            path: /v1/sys/health?standbyok=true
+            # uninitcode=200 and sealedcode=200 make vault report ready in all
+            # states so ArgoCD marks the StatefulSet healthy and the PostSync
+            # init Job can fire. VSO retries internally if vault is still sealed.
+            path: /v1/sys/health?standbyok=true&uninitcode=200&sealedcode=200
             port: 8200
             scheme: HTTP
           initialDelaySeconds: 10
