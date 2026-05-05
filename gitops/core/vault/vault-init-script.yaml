@@ -37,16 +37,16 @@ data:
       UK_B64=$(printf '%s' "$UNSEAL_KEY" | base64 | tr -d '\n')
       RT_B64=$(printf '%s' "$ROOT_TOKEN" | base64 | tr -d '\n')
 
-      curl -sf --cacert "$CA_CERT" \
-        -H "Authorization: Bearer $SA_TOKEN" \
-        -H "Content-Type: application/json" \
-        -X POST "$KUBE_API/api/v1/namespaces/$NAMESPACE/secrets" \
-        -d "{\"apiVersion\":\"v1\",\"kind\":\"Secret\",\"metadata\":{\"name\":\"vault-unseal-keys\"},\"type\":\"Opaque\",\"data\":{\"unseal-key\":\"$UK_B64\",\"root-token\":\"$RT_B64\"}}"
+      wget -q -O /dev/null --no-check-certificate \
+        --header="Authorization: Bearer $SA_TOKEN" \
+        --header="Content-Type: application/json" \
+        --post-data="{\"apiVersion\":\"v1\",\"kind\":\"Secret\",\"metadata\":{\"name\":\"vault-unseal-keys\"},\"type\":\"Opaque\",\"data\":{\"unseal-key\":\"$UK_B64\",\"root-token\":\"$RT_B64\"}}" \
+        "$KUBE_API/api/v1/namespaces/$NAMESPACE/secrets"
       echo "Unseal keys stored in vault-unseal-keys Secret."
     else
       echo "Vault already initialized. Reading unseal keys from vault-unseal-keys Secret..."
-      SECRET=$(curl -sf --cacert "$CA_CERT" \
-        -H "Authorization: Bearer $SA_TOKEN" \
+      SECRET=$(wget -q -O - --no-check-certificate \
+        --header="Authorization: Bearer $SA_TOKEN" \
         "$KUBE_API/api/v1/namespaces/$NAMESPACE/secrets/vault-unseal-keys")
       UNSEAL_KEY=$(echo "$SECRET" | grep -o '"unseal-key":"[^"]*"' | cut -d'"' -f4 | base64 -d)
       ROOT_TOKEN=$(echo "$SECRET" | grep -o '"root-token":"[^"]*"' | cut -d'"' -f4 | base64 -d)
