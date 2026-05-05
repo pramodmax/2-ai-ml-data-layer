@@ -1,46 +1,40 @@
 apiVersion: batch/v1
-kind: Job
+kind: CronJob
 metadata:
   name: approve-install-plan
   namespace: openshift-operators
   annotations:
-    argocd.argoproj.io/hook: Sync
-    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
     argocd.argoproj.io/sync-wave: "2"
 spec:
-  backoffLimit: 10
-  template:
+  schedule: "*/2 * * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 1
+  jobTemplate:
     spec:
-      serviceAccountName: install-plan-approver
-      restartPolicy: OnFailure
-      containers:
-      - name: approve
-        image: quay.io/openshift/origin-cli:latest
-        command:
-        - /bin/sh
-        - -c
-        - |
-          echo "Waiting for InstallPlan reference on subscription..."
-          for i in $(seq 1 60); do
-            IP=$(oc get subscription vault-secrets-operator -n openshift-operators \
-              -o jsonpath='{.status.installPlanRef.name}' 2>/dev/null)
-            if [ -n "$IP" ]; then
-              break
-            fi
-            echo "  attempt $i: installPlanRef not yet set, retrying..."
-            sleep 5
-          done
-          if [ -z "$IP" ]; then
-            echo "ERROR: timed out waiting for InstallPlan"
-            exit 1
-          fi
-          echo "Found InstallPlan: $IP"
-          APPROVED=$(oc get installplan "$IP" -n openshift-operators \
-            -o jsonpath='{.spec.approved}')
-          if [ "$APPROVED" = "true" ]; then
-            echo "InstallPlan already approved."
-          else
-            oc patch installplan "$IP" -n openshift-operators \
-              --type=merge -p '{"spec":{"approved":true}}'
-            echo "InstallPlan approved."
-          fi
+      template:
+        spec:
+          serviceAccountName: install-plan-approver
+          restartPolicy: OnFailure
+          containers:
+          - name: approve
+            image: quay.io/openshift/origin-cli:latest
+            command:
+            - /bin/sh
+            - -c
+            - |
+              IP=$(oc get subscription vault-secrets-operator -n openshift-operators \
+                -o jsonpath='{.status.installPlanRef.name}' 2>/dev/null)
+              if [ -z "$IP" ]; then
+                echo "No InstallPlan reference found, nothing to do."
+                exit 0
+              fi
+              APPROVED=$(oc get installplan "$IP" -n openshift-operators \
+                -o jsonpath='{.spec.approved}' 2>/dev/null)
+              if [ "$APPROVED" = "true" ]; then
+                echo "InstallPlan $IP already approved."
+              else
+                oc patch installplan "$IP" -n openshift-operators \
+                  --type=merge -p '{"spec":{"approved":true}}'
+                echo "Approved InstallPlan $IP"
+              fi
