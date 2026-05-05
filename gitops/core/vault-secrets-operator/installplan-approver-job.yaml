@@ -21,12 +21,19 @@ spec:
         - -c
         - |
           echo "Waiting for InstallPlan reference on subscription..."
-          until oc get subscription vault-secrets-operator -n openshift-operators \
-            -o jsonpath='{.status.installPlanRef.name}' 2>/dev/null | grep -q .; do
+          for i in $(seq 1 60); do
+            IP=$(oc get subscription vault-secrets-operator -n openshift-operators \
+              -o jsonpath='{.status.installPlanRef.name}' 2>/dev/null)
+            if [ -n "$IP" ]; then
+              break
+            fi
+            echo "  attempt $i: installPlanRef not yet set, retrying..."
             sleep 5
           done
-          IP=$(oc get subscription vault-secrets-operator -n openshift-operators \
-            -o jsonpath='{.status.installPlanRef.name}')
+          if [ -z "$IP" ]; then
+            echo "ERROR: timed out waiting for InstallPlan"
+            exit 1
+          fi
           echo "Found InstallPlan: $IP"
           APPROVED=$(oc get installplan "$IP" -n openshift-operators \
             -o jsonpath='{.spec.approved}')
