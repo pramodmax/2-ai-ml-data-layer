@@ -6,4 +6,6 @@ metadata:
   annotations:
     argocd.argoproj.io/sync-wave: "0"
 spec:
+  targetNamespaces:
+  - openshift-kueue-operator
   upgradeStrategy: Default
