@@ -16,3 +16,7 @@ bootstrap/.rendered/
 .idea/
 .vscode/
 *.swp
+
+# Claude Code context (lives in workspace .claude/ outside this repo)
+CLAUDE.md
+.claude/
