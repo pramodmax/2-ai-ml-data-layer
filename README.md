@@ -457,7 +457,31 @@ The `vault-init` Job (PostSync hook) does the following automatically on each sy
 6. Enables Kubernetes auth; creates `object-storage` and `rhoai` roles
 7. Writes `secret/object-storage/rustfs` and `secret/object-storage/s3-credentials` from the bootstrap Secret
 
-#### Step 4 — Create the S3 bucket in RustFS
+#### Step 4 — Access the Vault UI
+
+Once the `vault-init` Job completes, retrieve the root token and open the UI:
+
+```bash
+# Vault UI URL
+oc get route vault -n vault -o jsonpath='https://{.spec.host}/ui'
+
+# Root token (stored by the init job in the vault-unseal-keys Secret)
+oc get secret vault-unseal-keys -n vault \
+  -o jsonpath='{.data.root-token}' | base64 -d && echo
+```
+
+Open the URL in a browser, choose **Token** as the sign-in method, and paste the root token.
+
+The unseal key is also in the same Secret if you ever need to manually unseal after a pod restart:
+
+```bash
+oc get secret vault-unseal-keys -n vault \
+  -o jsonpath='{.data.unseal-key}' | base64 -d && echo
+```
+
+> **Note:** The root token has unrestricted access. For day-to-day use create a scoped token via the Vault UI (Policies → Tokens) and revoke it when done.
+
+#### Step 5 — Create the S3 bucket in RustFS
 
 After RustFS is running (object-storage Application synced), create the bucket ArgoCD does not create it for you:
 
