@@ -138,8 +138,8 @@ Bootstrap flow:
 |-----------|-----------|-----------------|
 | **OpenShift GitOps** (ArgoCD) | `openshift-gitops` | Bootstrapped by Terraform. Drives the entire stack via GitOps — any change pushed to this repo is automatically applied. Single pane of glass for all sync status. |
 | **cert-manager** | `openshift-cert-manager-operator` | Required by KServe for TLS certificate management on model-serving endpoints. Also needed by Kueue and distributed inference workloads. Red Hat supported operator (`stable-v1` channel). |
-| **Kueue** | `openshift-kueue-operator` | Batch workload queue management for AI training jobs. Controls resource quotas and job priorities across Ray, PyTorch, and Kubeflow Training workloads. |
-| **JobSet** | `openshift-jobset-operator` | Kubernetes JobSet API — required dependency for Kueue and distributed training jobs (multi-node PyTorch, etc.). |
+| **Kueue** | `openshift-kueue-operator` | Batch workload queue management for AI training jobs. Controls resource quotas and job priorities across Ray, PyTorch, and Kubeflow Training workloads. Requires AllNamespaces OperatorGroup (no `targetNamespaces`). |
+| **JobSet** | `openshift-jobset-operator` | Kubernetes JobSet API — required dependency for Kueue and distributed training jobs (multi-node PyTorch, etc.). Requires OwnNamespace OperatorGroup (`targetNamespaces: [openshift-jobset-operator]`). |
 | **Object Storage (RustFS)** | `object-storage` | Open-source S3-compatible object store deployed in-cluster. Credentials are never stored in git — they are synced from HashiCorp Vault via `VaultStaticSecret` CRs. The `s3-credentials` Secret is materialised in `redhat-ods-applications` and picked up by AI Pipelines and MLflow. |
 | **OpenShift Pipelines** (Tekton) | `openshift-operators` | CI/CD and ML pipeline orchestration. RHOAI AI Pipelines (Kubeflow v2) uses this as its execution engine for automated model training, evaluation, and promotion workflows. |
 | **Red Hat OpenShift AI 3.4** | `redhat-ods-operator` | Core AI/ML platform. Provides: Dashboard, Jupyter Workbenches, AI Pipelines (Kubeflow v2), KServe model serving, Ray distributed training, TrustyAI explainability, MLflow tracking, Model Registry, and Kueue batch management. |
@@ -147,7 +147,7 @@ Bootstrap flow:
 | **MLflow** | `redhat-ods-applications` | Experiment tracking, metric logging, artifact storage, and model versioning. Integrated into RHOAI 3.4 as Technology Preview via the `mlflowoperator` component. |
 | **Red Hat SSO** (Keycloak) | `rhsso` | Identity and access management. Provides OIDC/OAuth2 for authenticating users into RHOAI workbenches and the OpenShift console. Supports integration with enterprise LDAP/Active Directory. |
 | **HashiCorp Vault** | `vault` | Self-hosted secret store. Deployed first (ApplicationSet wave -10) so credential KV paths are available before dependent components start. A PostSync Job initialises Vault, stores unseal keys in a K8s Secret, and populates `secret/object-storage/*` from a bootstrap Secret the operator creates once (never in git). |
-| **Vault Secrets Operator** | `openshift-operators` | Syncs secrets from HashiCorp Vault into Kubernetes Secrets via `VaultStaticSecret` CRs. Deployed at wave -5, after Vault is up. Used to inject RustFS credentials without storing them in git. |
+| **Vault Secrets Operator** | `openshift-operators` | Syncs secrets from HashiCorp Vault into Kubernetes Secrets via `VaultStaticSecret` CRs. Deployed at wave -5, after Vault is up. A CronJob (wave 1) auto-approves the OLM InstallPlan every 2 minutes, which is needed because certified-operators may generate a pending plan even when `installPlanApproval: Automatic` is set. |
 | **User Workload Monitoring** | `openshift-monitoring` | Extends the built-in OpenShift Prometheus to scrape metrics from AI/ML workloads, model servers, and pipeline runs. Required for RHOAI's model-serving metrics and TrustyAI fairness monitoring. |
 | **Grafana** | `grafana` | Custom dashboards for GPU utilisation, model inference latency, pipeline throughput, and cluster resource consumption. Connects to OpenShift Thanos Querier. |
 | **Data Science Project** | `data-science-project` | Tenant namespace registered in the RHOAI dashboard. Data scientists create notebooks, run pipelines, and deploy models here. RBAC grants access to the `data-scientists` group via RH SSO. |
@@ -185,10 +185,11 @@ Once an Application starts syncing, its resources apply in ascending resource wa
 | Wave | What is applied |
 |------|----------------|
 | `-5` | Namespaces, user workload monitoring ConfigMaps |
-| `0` | OperatorGroups (RHOAI, cert-manager, kueue, grafana); VaultConnection + VaultAuth CRs |
-| `1` | Subscriptions — cert-manager, Kueue, JobSet, Pipelines, RHOAI, RH SSO, Vault Secrets Operator, Grafana |
-| `5` | RustFS Deployment, Service, Route |
-| `6` | VaultStaticSecret CRs — materialise `rustfs-credentials` and `s3-credentials` from Vault |
+| `0` | OperatorGroups (RHOAI, cert-manager, kueue, grafana); InstallPlan approver RBAC (vault-secrets-operator) |
+| `1` | Subscriptions — cert-manager, Kueue, JobSet, Pipelines, RHOAI, RH SSO, Vault Secrets Operator, Grafana; InstallPlan approver CronJob |
+| `4` | VaultConnection + VaultAuth + VaultStaticSecret CRs — VSO materialises `rustfs-credentials` and `s3-credentials` from Vault |
+| `5` | RustFS PVC, Service, Route |
+| `6` | RustFS Deployment (starts after `rustfs-credentials` Secret exists from wave 4) |
 | `10` | DSCInitialization (waits for RHOAI operator to be `Succeeded`) |
 | `15` | DataScienceCluster, Keycloak, Grafana instance |
 | `20` | MLflow CR instance, Data Science Project RoleBindings |
@@ -354,7 +355,7 @@ oc get csv -A --watch
     │   ├── namespaces/               # All namespaces (wave -5)
     │   ├── cert-manager/             # cert-manager operator (waves 0-1)
     │   ├── kueue/                    # Kueue + JobSet operators (waves 0-1)
-    │   ├── object-storage/           # RustFS deployment + VaultStaticSecrets (waves 5-6)
+    │   ├── object-storage/           # RustFS deployment + VaultStaticSecrets (waves 4-6)
     │   ├── openshift-pipelines/      # Tekton operator (wave 1)
     │   ├── rhoai/                    # RHOAI 3.4 operator + DSC + DSCI (waves 1-15)
     │   ├── mlflow/                   # MLflow CR instance (wave 20)
