@@ -1,0 +1,39 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: approve-install-plan
+  namespace: openshift-operators
+  annotations:
+    argocd.argoproj.io/hook: Sync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation
+    argocd.argoproj.io/sync-wave: "2"
+spec:
+  backoffLimit: 10
+  template:
+    spec:
+      serviceAccountName: install-plan-approver
+      restartPolicy: OnFailure
+      containers:
+      - name: approve
+        image: quay.io/openshift/origin-cli:latest
+        command:
+        - /bin/sh
+        - -c
+        - |
+          echo "Waiting for InstallPlan reference on subscription..."
+          until oc get subscription vault-secrets-operator -n openshift-operators \
+            -o jsonpath='{.status.installPlanRef.name}' 2>/dev/null | grep -q .; do
+            sleep 5
+          done
+          IP=$(oc get subscription vault-secrets-operator -n openshift-operators \
+            -o jsonpath='{.status.installPlanRef.name}')
+          echo "Found InstallPlan: $IP"
+          APPROVED=$(oc get installplan "$IP" -n openshift-operators \
+            -o jsonpath='{.spec.approved}')
+          if [ "$APPROVED" = "true" ]; then
+            echo "InstallPlan already approved."
+          else
+            oc patch installplan "$IP" -n openshift-operators \
+              --type=merge -p '{"spec":{"approved":true}}'
+            echo "InstallPlan approved."
+          fi
