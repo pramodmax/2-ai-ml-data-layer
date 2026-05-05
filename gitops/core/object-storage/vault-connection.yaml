@@ -7,7 +7,7 @@ metadata:
   name: vault-connection
   namespace: object-storage
   annotations:
-    argocd.argoproj.io/sync-wave: "5"
+    argocd.argoproj.io/sync-wave: "4"
     argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
 spec:
   address: http://vault.vault.svc.cluster.local:8200
@@ -18,7 +18,7 @@ metadata:
   name: vault-connection
   namespace: redhat-ods-applications
   annotations:
-    argocd.argoproj.io/sync-wave: "5"
+    argocd.argoproj.io/sync-wave: "4"
     argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
 spec:
   address: http://vault.vault.svc.cluster.local:8200

@@ -18,7 +18,7 @@ metadata:
   name: vault-auth
   namespace: object-storage
   annotations:
-    argocd.argoproj.io/sync-wave: "5"
+    argocd.argoproj.io/sync-wave: "4"
     argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
 spec:
   vaultConnectionRef: vault-connection
@@ -36,7 +36,7 @@ metadata:
   name: vault-auth
   namespace: redhat-ods-applications
   annotations:
-    argocd.argoproj.io/sync-wave: "5"
+    argocd.argoproj.io/sync-wave: "4"
     argocd.argoproj.io/sync-options: SkipDryRunOnMissingResource=true
 spec:
   vaultConnectionRef: vault-connection
