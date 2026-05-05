@@ -26,7 +26,7 @@ variable "gitops_repo_url" {
   description = <<-EOT
     Git repository URL that ArgoCD will sync from.
     This should be the URL of your fork/clone of this repository.
-    Example: https://github.com/your-org/2-ai-ml-data-layer.git
+    Example: https://github.com/your-org/2-ai-ml-platform-layer.git
   EOT
   type        = string
 }

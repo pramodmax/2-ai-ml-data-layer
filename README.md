@@ -1,4 +1,4 @@
-# AI/ML Data Layer — GitOps Bootstrap
+# AI/ML Platform Layer — GitOps Bootstrap
 
 Terraform bootstrap + GitOps manifests for deploying a production-ready AI/ML platform on Red Hat OpenShift. Terraform installs OpenShift GitOps (ArgoCD) and registers one ApplicationSet; from that point ArgoCD owns the full stack.
 
@@ -234,8 +234,8 @@ Run `bootstrap/scripts/check-cluster-prereqs.sh` to verify all of the above befo
 ArgoCD needs a Git URL it can sync from. Fork this repo to your own organisation, then clone it:
 
 ```bash
-git clone https://github.com/your-org/2-ai-ml-data-layer.git
-cd 2-ai-ml-data-layer
+git clone https://github.com/your-org/2-ai-ml-platform-layer.git
+cd 2-ai-ml-platform-layer
 ```
 
 ### 2 — Create your variables file
@@ -336,7 +336,7 @@ oc get csv -A --watch
 ## Project Structure
 
 ```
-2-ai-ml-data-layer/
+2-ai-ml-platform-layer/
 ├── bootstrap/                        # Terraform — run once to seed the cluster
 │   ├── scripts/
 │   │   ├── validate-tfvars.sh        # Validates terraform.tfvars before apply

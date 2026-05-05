@@ -1,13 +1,13 @@
 apiVersion: argoproj.io/v1alpha1
 kind: ApplicationSet
 metadata:
-  name: ai-ml-data-layer
+  name: ai-ml-platform-layer
   namespace: openshift-gitops
 spec:
   goTemplate: true
   generators:
   - git:
-      repoURL: https://github.com/pramodmax/2-ai-ml-data-layer.git
+      repoURL: https://github.com/pramodmax/2-ai-ml-platform-layer.git
       revision: main
       directories:
       - path: gitops/core/*
@@ -23,7 +23,7 @@ spec:
     spec:
       project: default
       source:
-        repoURL: https://github.com/pramodmax/2-ai-ml-data-layer.git
+        repoURL: https://github.com/pramodmax/2-ai-ml-platform-layer.git
         targetRevision: main
         path: '{{.path.path}}'
       destination:

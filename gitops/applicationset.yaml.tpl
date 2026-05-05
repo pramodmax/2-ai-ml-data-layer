@@ -1,7 +1,7 @@
 apiVersion: argoproj.io/v1alpha1
 kind: ApplicationSet
 metadata:
-  name: ai-ml-data-layer
+  name: ai-ml-platform-layer
   namespace: openshift-gitops
 spec:
   goTemplate: true
